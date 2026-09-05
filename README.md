@@ -15,7 +15,10 @@ What it does:
   for WorldGuard, etc.).
 - Offers two modes: **Quick start** (latest Paper + a small essentials set -
   TAB, ViaVersion, SimpleTPA - asks only for the server name, folder and RAM)
-  and the original **Full setup** wizard that customizes everything.
+  and the original **Full setup** wizard that customizes everything. On Folia,
+  Full setup only offers plugins whose authors ship Folia-compatible builds.
+- On startup, quietly checks GitHub Releases for a newer installer version
+  and prints a hint when one exists (offline installs are unaffected).
 - Asks for a server name (or lets you hit Enter for a default). When TAB is
   installed, the name is shown at the top of the tablist in Minecraft "small
   font" (Unicode small caps, e.g. ᴍʏ ꜱᴇʀᴠᴇʀ) in a color of your choice.
@@ -138,12 +141,13 @@ Shipped:
   SimpleTPA and SimpleHomes get pinned default configs so a fresh server
   works without manual setup.
 - **Quick start mode.** One screen to a working server with the essentials.
+- **Folia-aware plugin list.** Full setup offers only Folia-compatible plugins
+  when Folia is the server software, instead of a blanket warning.
+- **Installer self-update check.** A startup hint when a newer release exists.
 
 Next up:
 
 - Config presets for the remaining offered plugins.
-- Folia-aware plugin list: filter plugins by the chosen server software instead
-  of warning that most plugins will not run on Folia.
 
 Later:
 
@@ -153,8 +157,6 @@ Later:
 
 Ideas:
 
-- Auto-update for the installer itself, checking the GitHub releases for a
-  newer version.
 - Management scripts next to `start.bat` / `start.sh`: stop/restart, world
   backups, crash auto-restart.
 - Show a preview of the config changes before the install runs.

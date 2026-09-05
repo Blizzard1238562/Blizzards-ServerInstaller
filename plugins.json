@@ -1,5 +1,5 @@
 {
-  "_comment": "Registry of optional plugins offered during setup. modrinth_slug must match the project slug at modrinth.com/plugin/<slug>. Add new entries here to extend the wizard - no code changes needed. 'requires' lists other plugin ids that will be silently force-installed as dependencies if this one is chosen.",
+  "_comment": "Registry of optional plugins offered during setup. modrinth_slug must match the project slug at modrinth.com/plugin/<slug>. Add new entries here to extend the wizard - no code changes needed. 'requires' lists other plugin ids that will be silently force-installed as dependencies if this one is chosen. 'folia' marks plugins known to run on Folia; the Full-setup wizard hides everything else when Folia is selected. Curated from author releases (Modrinth loader tags are incomplete for some projects, e.g. spark).",
   "categories": {
     "core": "Core / Foundation",
     "protection": "Protection & Anti-Grief",
@@ -15,7 +15,8 @@
       "category": "core",
       "question": "Install LuckPerms (permissions & group management)?",
       "default": true,
-      "requires": []
+      "requires": [],
+      "folia": true
     },
     {
       "id": "vault",
@@ -24,7 +25,8 @@
       "category": "core",
       "question": "Install Vault (economy/permissions API bridge, needed by many other plugins)?",
       "default": true,
-      "requires": []
+      "requires": [],
+      "folia": false
     },
     {
       "id": "essentialsx",
@@ -33,7 +35,10 @@
       "category": "core",
       "question": "Install EssentialsX (homes, warps, kits, tpa, core commands)?",
       "default": true,
-      "requires": ["vault"]
+      "requires": [
+        "vault"
+      ],
+      "folia": false
     },
     {
       "id": "tab",
@@ -43,7 +48,8 @@
       "question": "Install TAB and set a minimal tablist showing your server name (small caps)?",
       "default": false,
       "requires": [],
-      "essential": true
+      "essential": true,
+      "folia": true
     },
     {
       "id": "placeholderapi",
@@ -52,7 +58,8 @@
       "category": "gameplay",
       "question": "Install PlaceholderAPI (placeholder support used by TAB, Essentials, etc.)?",
       "default": false,
-      "requires": []
+      "requires": [],
+      "folia": true
     },
     {
       "id": "coreprotect",
@@ -61,7 +68,8 @@
       "category": "protection",
       "question": "Install CoreProtect (block logging & rollback anti-grief tool)?",
       "default": true,
-      "requires": []
+      "requires": [],
+      "folia": true
     },
     {
       "id": "worldedit",
@@ -70,7 +78,8 @@
       "category": "protection",
       "question": "Install WorldEdit (in-game world editing)?",
       "default": false,
-      "requires": []
+      "requires": [],
+      "folia": true
     },
     {
       "id": "worldguard",
@@ -79,7 +88,10 @@
       "category": "protection",
       "question": "Install WorldGuard (region protection, requires WorldEdit)?",
       "default": false,
-      "requires": ["worldedit"]
+      "requires": [
+        "worldedit"
+      ],
+      "folia": true
     },
     {
       "id": "multiverse-core",
@@ -88,7 +100,8 @@
       "category": "gameplay",
       "question": "Install Multiverse-Core (manage multiple worlds)?",
       "default": false,
-      "requires": []
+      "requires": [],
+      "folia": false
     },
     {
       "id": "chunky",
@@ -97,7 +110,8 @@
       "category": "ops",
       "question": "Install Chunky (fast world/chunk pre-generation)?",
       "default": false,
-      "requires": []
+      "requires": [],
+      "folia": true
     },
     {
       "id": "viaversion",
@@ -107,7 +121,8 @@
       "question": "Install ViaVersion (let newer Minecraft clients join an older server version)?",
       "default": false,
       "requires": [],
-      "essential": true
+      "essential": true,
+      "folia": true
     },
     {
       "id": "geyser",
@@ -116,7 +131,8 @@
       "category": "crossplay",
       "question": "Install Geyser (allow Bedrock Edition players to join)?",
       "default": false,
-      "requires": []
+      "requires": [],
+      "folia": false
     },
     {
       "id": "floodgate",
@@ -125,7 +141,10 @@
       "category": "crossplay",
       "question": "Install Floodgate (lets Bedrock players join without a Java account, requires Geyser)?",
       "default": false,
-      "requires": ["geyser"]
+      "requires": [
+        "geyser"
+      ],
+      "folia": false
     },
     {
       "id": "spark",
@@ -134,7 +153,8 @@
       "category": "ops",
       "question": "Install spark (performance profiler for diagnosing lag)?",
       "default": true,
-      "requires": []
+      "requires": [],
+      "folia": true
     },
     {
       "id": "dynmap",
@@ -143,7 +163,8 @@
       "category": "ops",
       "question": "Install Dynmap (live web map of your world)?",
       "default": false,
-      "requires": []
+      "requires": [],
+      "folia": false
     },
     {
       "id": "simpletpa",
@@ -153,7 +174,8 @@
       "question": "Install SimpleTPA (lightweight /tpa, /tpahere and /tpaccept requests)?",
       "default": false,
       "requires": [],
-      "essential": true
+      "essential": true,
+      "folia": true
     },
     {
       "id": "simplehomes",
@@ -162,7 +184,8 @@
       "category": "gameplay",
       "question": "Install SimpleHomes (per-player /sethome and /home)?",
       "default": false,
-      "requires": []
+      "requires": [],
+      "folia": true
     }
   ]
 }

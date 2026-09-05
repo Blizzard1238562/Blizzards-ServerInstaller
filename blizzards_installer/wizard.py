@@ -15,6 +15,7 @@ from .config import apply_gameplay_config, write_eula, write_server_properties
 from .plugins import (
     install_plugins,
     load_plugin_registry,
+    plugins_for_server,
     resolve_dependencies,
     write_tab_config,
 )
@@ -146,10 +147,8 @@ def run_full_wizard() -> None:
     info(f"Server software: {server['label']}")
     if server_type == "folia":
         warn(
-            "Folia uses a regionized multithreading model - most Bukkit/Paper plugins "
-            "(including several in this wizard) are NOT compatible with it unless the "
-            "plugin author has explicitly added Folia support. Only pick plugins you know "
-            "are Folia-ready."
+            "Folia uses a regionized multithreading model - the plugin list below only "
+            "offers plugins whose authors ship Folia-compatible builds."
         )
     mc_version = choose_minecraft_version()
 
@@ -196,10 +195,14 @@ def run_full_wizard() -> None:
 
     section("Plugins")
     plugins, categories = load_plugin_registry()
-    plugins_by_id = {p["id"]: p for p in plugins}
+    offered_plugins, skipped_plugins = plugins_for_server(plugins, server_type)
+    if skipped_plugins:
+        names = ", ".join(p["name"] for p in skipped_plugins)
+        warn(f"Skipping {len(skipped_plugins)} plugins without Folia support: {names}.")
+    plugins_by_id = {p["id"]: p for p in offered_plugins}
     selected_ids: set[str] = set()
     current_category = None
-    for plugin in plugins:
+    for plugin in offered_plugins:
         if plugin["category"] != current_category:
             current_category = plugin["category"]
             print(f"\n  -- {categories.get(current_category, current_category)} --")

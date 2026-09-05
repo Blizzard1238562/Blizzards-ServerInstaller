@@ -6,6 +6,7 @@ realistic fixture JSON/YAML through the functions to make sure nothing
 throws and the output is what we expect. Run with: python3 test_installer.py
 """
 import base64
+import json
 import shutil
 import subprocess
 import sys
@@ -32,11 +33,14 @@ from blizzards_installer.plugins import (
     get_modrinth_plugin_download,
     install_plugins,
     load_plugin_registry,
+    plugins_for_server,
     resolve_dependencies,
     small_caps,
     write_tab_config,
 )
 from blizzards_installer.presets import PRESETS, write_plugin_presets
+from blizzards_installer.update import _parse_version, available_update
+from blizzards_installer.meta import VERSION
 from blizzards_installer.public import (
     agent_asset,
     install_agent,
@@ -307,6 +311,30 @@ class TestPluginRegistry(unittest.TestCase):
         plugins, _ = load_plugin_registry()
         tab = next(p for p in plugins if p["id"] == "tab")
         self.assertEqual(tab["modrinth_slug"], "tab-was-taken")
+
+    def test_folia_flags_are_curated_per_plugin(self):
+        plugins, _ = load_plugin_registry()
+        flags = {p["id"]: p.get("folia") for p in plugins}
+        # authors with Folia builds
+        for pid in ("tab", "viaversion", "luckperms", "simpletpa", "spark"):
+            self.assertIs(flags[pid], True, f"{pid} should be Folia-compatible")
+        # no Folia builds published
+        for pid in ("vault", "essentialsx", "multiverse-core", "geyser", "dynmap"):
+            self.assertIs(flags[pid], False, f"{pid} should not be offered on Folia")
+
+    def test_plugins_for_server_filters_on_folia(self):
+        plugins, _ = load_plugin_registry()
+        offered, skipped = plugins_for_server(plugins, "folia")
+        offered_ids = {p["id"] for p in offered}
+        skipped_ids = {p["id"] for p in skipped}
+        self.assertIn("viaversion", offered_ids)
+        self.assertNotIn("vault", offered_ids)
+        self.assertEqual(offered_ids | skipped_ids, {p["id"] for p in plugins})
+        self.assertEqual(offered_ids & skipped_ids, set())
+        # other server types keep the full list
+        offered_all, skipped_all = plugins_for_server(plugins, "paper")
+        self.assertEqual(len(skipped_all), 0)
+        self.assertEqual(len(offered_all), len(plugins))
 
 
 class TestStartScripts(unittest.TestCase):
@@ -752,6 +780,51 @@ class TestTabConfig(unittest.TestCase):
         write_tab_config(self.tmpdir, 'Say "hi"')
         text = (self.tmpdir / "plugins" / "TAB" / "config.yml").read_text(encoding="utf-8")
         self.assertIn('- "ꜱᴀʏ \\"ʜɪ\\""', text)
+
+
+class TestUpdateCheck(unittest.TestCase):
+    def test_parse_version(self):
+        self.assertEqual(_parse_version("v1.2.0"), (1, 2, 0))
+        self.assertEqual(_parse_version("1.10.0-beta.2"), (1, 10, 0))
+        self.assertEqual(_parse_version("v1"), (1,))
+
+    @staticmethod
+    def _patch_payload(tag):
+        payload = json.dumps({"tag_name": tag}).encode("utf-8")
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return payload
+
+        return patch(
+            "blizzards_installer.update.urllib.request.urlopen",
+            side_effect=lambda request, **kwargs: FakeResp(),
+        )
+
+    def test_newer_release_reported(self):
+        with self._patch_payload("v2.0.0"):
+            self.assertEqual(available_update(), "v2.0.0")
+
+    def test_same_version_not_reported(self):
+        with self._patch_payload(f"v{VERSION}"):
+            self.assertIsNone(available_update())
+
+    def test_older_release_not_reported(self):
+        with self._patch_payload("v1.0.0"):
+            self.assertIsNone(available_update())
+
+    def test_network_failure_silently_ignored(self):
+        with patch(
+            "blizzards_installer.update.urllib.request.urlopen",
+            side_effect=Exception("offline"),
+        ):
+            self.assertIsNone(available_update())
 
 
 class TestPresetConfigs(unittest.TestCase):

@@ -19,12 +19,19 @@ except ImportError:
     print("Missing dependency 'PyYAML'. Install it with: pip install pyyaml")
     sys.exit(1)
 
-from blizzards_installer.ui import banner, error, warn
+from blizzards_installer.ui import banner, error, info, warn
+from blizzards_installer.update import available_update
 from blizzards_installer.wizard import run_wizard
 
 
 def main() -> None:
     banner()
+    try:
+        newest = available_update()
+    except Exception:
+        newest = None
+    if newest:
+        info(f"Update available: {newest} - download it from the GitHub releases page.")
     try:
         run_wizard()
     except KeyboardInterrupt:

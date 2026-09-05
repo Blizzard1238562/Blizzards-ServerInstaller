@@ -37,6 +37,21 @@ def load_plugin_registry() -> tuple[list[dict], dict]:
     return data["plugins"], data.get("categories", {})
 
 
+def plugins_for_server(plugins: list[dict], server_type: str) -> tuple[list[dict], list[dict]]:
+    """Split the registry into plugins that can run on a server type and
+    plugins that must be skipped.
+
+    Only Folia currently differs: the wizard offers exactly the plugins whose
+    authors ship Folia-compatible builds (flagged `"folia": true` in
+    plugins.json) and skips the rest. Every other type is Paper-compatible
+    and gets the full list."""
+    if server_type == "folia":
+        offered = [p for p in plugins if p.get("folia")]
+        skipped = [p for p in plugins if not p.get("folia")]
+        return offered, skipped
+    return plugins, []
+
+
 def resolve_dependencies(selected_ids: set[str], plugins_by_id: dict[str, dict]) -> set[str]:
     """Pull in any 'requires' dependencies for the chosen plugins (recursively),
     printing a note so the user knows why something extra got installed."""
