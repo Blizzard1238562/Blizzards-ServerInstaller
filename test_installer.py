@@ -39,6 +39,7 @@ from blizzards_installer.plugins import (
     write_tab_config,
 )
 from blizzards_installer.presets import PRESETS, write_plugin_presets
+from blizzards_installer.sysinfo import _meminfo_kb, DEFAULT_RAM_MB, recommended_ram_mb, suggest_ram_mb
 from blizzards_installer.update import _parse_version, available_update
 from blizzards_installer.meta import VERSION
 from blizzards_installer.public import (
@@ -56,7 +57,7 @@ from blizzards_installer.serverjar import (
     download_server_jar,
 )
 from blizzards_installer.versions import choose_minecraft_version
-from blizzards_installer.wizard import run_wizard
+from blizzards_installer.wizard import run_quick_unattended, run_wizard
 
 
 class TestFindJarUrl(unittest.TestCase):
@@ -782,6 +783,25 @@ class TestTabConfig(unittest.TestCase):
         self.assertIn('- "ꜱᴀʏ \\"ʜɪ\\""', text)
 
 
+class TestSysInfo(unittest.TestCase):
+    def test_meminfo_kb_parsing(self):
+        sample = "MemTotal:       16777216 kB\nMemFree:        1000000 kB\n"
+        self.assertEqual(_meminfo_kb(sample), 16777216)
+        self.assertIsNone(_meminfo_kb("nothing here"))
+
+    def test_suggest_ram_is_half_capped_at_8gb(self):
+        self.assertEqual(suggest_ram_mb(16384), 8192)  # 16 GB -> half
+        self.assertEqual(suggest_ram_mb(8192), 4096)  # 8 GB -> half
+        self.assertEqual(suggest_ram_mb(4096), 2048)  # 4 GB -> half
+        self.assertEqual(suggest_ram_mb(2048), 1024)  # never below 1 GB
+        self.assertEqual(suggest_ram_mb(65536), 8192)  # capped at 8 GB
+        self.assertEqual(suggest_ram_mb(0), DEFAULT_RAM_MB)
+
+    def test_recommended_falls_back_when_detection_fails(self):
+        with patch("blizzards_installer.sysinfo.total_ram_mb", return_value=None):
+            self.assertEqual(recommended_ram_mb(), DEFAULT_RAM_MB)
+
+
 class TestUpdateCheck(unittest.TestCase):
     def test_parse_version(self):
         self.assertEqual(_parse_version("v1.2.0"), (1, 2, 0))
@@ -887,6 +907,31 @@ class TestWizardEndToEnd(unittest.TestCase):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"fake jar")
 
+    def test_unattended_quick_install_never_prompts(self):
+        server_dir = Path(tempfile.mkdtemp()) / "auto"
+        with patch("blizzards_installer.ui.input", side_effect=AssertionError("unattended mode must not ask")), \
+                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
+                patch("blizzards_installer.net.download_file", side_effect=self._fake_download):
+            run_quick_unattended(server_name="Auto Server", server_dir=server_dir, ram_mb=2048)
+
+        props = (server_dir / "server.properties").read_text(encoding="utf-8")
+        self.assertIn("motd=Auto Server", props)
+        self.assertIn("-Xms2048M -Xmx2048M", (server_dir / "start.bat").read_text(encoding="utf-8"))
+        plugins_dir = server_dir / "plugins"
+        self.assertTrue((plugins_dir / "tab-was-taken.jar").exists())
+        self.assertTrue((plugins_dir / "viaversion.jar").exists())
+        self.assertTrue((plugins_dir / "simpletpaplugin.jar").exists())
+        tab_text = (plugins_dir / "TAB" / "config.yml").read_text(encoding="utf-8")
+        self.assertIn('- "ᴀᴜᴛᴏ ꜱᴇʀᴠᴇʀ"', tab_text)
+
+    def test_unattended_quick_install_refuses_nonempty_dir(self):
+        server_dir = Path(tempfile.mkdtemp()) / "existing"
+        server_dir.mkdir()
+        (server_dir / "world").mkdir()
+        with patch("blizzards_installer.ui.input", side_effect=AssertionError("must not ask")):
+            with self.assertRaises(RuntimeError):
+                run_quick_unattended(server_dir=server_dir)
+
     def test_quick_wizard_installs_essentials_only(self):
         server_dir = Path(tempfile.mkdtemp()) / "quick"
         # Prompt order in Quick mode: mode (default = Quick), server name,
@@ -895,7 +940,7 @@ class TestWizardEndToEnd(unittest.TestCase):
             "\n",  # mode -> Quick start (index 0)
             "My Quick Server\n",
             str(server_dir) + "\n",
-            "\n",  # RAM -> default 4096
+            "4096\n",  # RAM (fixed value; the prefilled default depends on the host)
         ]
 
         calls = iter(answers)
@@ -937,15 +982,16 @@ class TestWizardEndToEnd(unittest.TestCase):
         # One input per wizard prompt, in ask order (see run_full_wizard): mode,
         # software, version, dir, server name, name color, motd, max players,
         # difficulty, online/whitelist/pvp/hardcore/flight, view/sim distance,
+        # world seed, gamemode, spawn protection, nether, command blocks,
         # TNT dupe, block break, headless pistons, anti-xray(+mode), 17 plugin
         # prompts, RAM, proceed, playit. Defaults ("\n") answer the rest.
-        answers = ["\n"] * 41
+        answers = ["\n"] * 46
         answers[0] = "2\n"  # mode -> Full setup (index 1)
         answers[3] = str(server_dir) + "\n"  # install directory
         answers[5] = "2\n"  # server name color -> index 1 = Gray (&7)
-        answers[16] = "y\n"  # allow TNT duplication -> patched to true below
-        answers[24] = "y\n"  # install TAB (4th plugin prompt)
-        answers[38] = "2048\n"  # RAM for the start scripts
+        answers[21] = "y\n"  # allow TNT duplication -> patched to true below
+        answers[29] = "y\n"  # install TAB (4th plugin prompt)
+        answers[43] = "2048\n"  # RAM for the start scripts
 
         def fake_bootstrap(dir_path, jar_path):
             TestApplyGameplayConfig._write_fixture_configs(dir_path)

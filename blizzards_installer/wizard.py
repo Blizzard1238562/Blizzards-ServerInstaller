@@ -23,10 +23,12 @@ from .presets import write_plugin_presets
 from .public import install_agent, open_claim_console, store_secret, write_public_files
 from .scripts import write_start_scripts
 from .serverjar import SERVER_TYPES, download_server_jar
+from .sysinfo import recommended_ram_mb
 from .ui import ask_choice, ask_int, ask_text, ask_yes_no, error, info, ok, section, warn
 from .versions import choose_minecraft_version, get_recent_release_versions
 
 DIFFICULTIES = ["peaceful", "easy", "normal", "hard"]
+GAMEMODES = ["survival", "creative", "adventure", "spectator"]
 
 # (label, legacy color code) for the TAB tablist header. Empty code = plain
 # white, i.e. no color prefix.
@@ -82,7 +84,8 @@ def run_quick_wizard() -> None:
     """Bare-bones setup: latest Paper, name + RAM, and the essential plugins
     only (flagged `"essential": true` in plugins.json). No per-plugin or
     gameplay questions, no config bootstrap - Paper generates its config on
-    the first real start."""
+    the first real start. RAM is still asked, prefilled with a value based on
+    the machine's memory."""
     info(
         "Quick start installs the latest Paper with a small set of essentials "
         "(TAB, ViaVersion, SimpleTPA) and sensible defaults. Pick Full setup "
@@ -92,9 +95,42 @@ def run_quick_wizard() -> None:
     server_dir = _choose_install_dir()
     if server_dir is None:
         return
-    ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", 4096)
+    ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", recommended_ram_mb())
     mc_version = _latest_release_or_manual()
+    _quick_install(server_name, server_dir, ram_mb, mc_version)
 
+
+def run_quick_unattended(
+    server_name: str | None = None,
+    server_dir: Path | None = None,
+    ram_mb: int | None = None,
+) -> None:
+    """Non-interactive Quick start (used by the CLI flags).
+
+    Never prompts: missing values fall back to the same defaults the wizard
+    would offer. Raises RuntimeError instead of asking when something needs a
+    decision (non-empty install folder, unreachable version list)."""
+    section("Setup mode")
+    info("Running an unattended Quick start install.")
+    target = (server_dir or Path.cwd() / "server").expanduser().resolve()
+    target.mkdir(parents=True, exist_ok=True)
+    if any(target.iterdir()):
+        raise RuntimeError(f"Install directory is not empty - refusing to touch it: {target}")
+    name = server_name or "Minecraft Server"
+    ram = ram_mb or recommended_ram_mb()
+    try:
+        recent = get_recent_release_versions(limit=1)
+        mc_version = recent[0] if recent else ""
+        if not mc_version:
+            raise RuntimeError("version list was empty")
+    except Exception as exc:
+        raise RuntimeError(f"Could not determine the latest Minecraft version ({exc}).") from exc
+    _quick_install(name, target, ram, mc_version)
+
+
+def _quick_install(server_name: str, server_dir: Path, ram_mb: int, mc_version: str) -> None:
+    """Install latest Paper + the essential plugins. No prompts; the caller
+    decides on name/folder/RAM/version."""
     plugins, _categories = load_plugin_registry()
     plugins_by_id = {p["id"]: p for p in plugins}
     essential_ids = {p["id"] for p in plugins if p.get("essential")}
@@ -175,6 +211,11 @@ def run_full_wizard() -> None:
     allow_flight = ask_yes_no("Allow flight (some minigame/creative plugins need this)?", False)
     view_distance = ask_int("View distance (chunks)", 10)
     sim_distance = ask_int("Simulation distance (chunks)", 10)
+    world_seed = ask_text("World seed (blank = random)", "")
+    gamemode = GAMEMODES[ask_choice("Default gamemode", GAMEMODES, default_index=0)]
+    spawn_protection = ask_int("Spawn protection radius (blocks)", 16)
+    allow_nether = ask_yes_no("Allow the Nether?", True)
+    enable_command_blocks = ask_yes_no("Enable command blocks?", False)
 
     section("Gameplay & exploit settings (Paper)")
     info("These control vanilla bugs/exploits that Paper patches by default.")
@@ -212,7 +253,7 @@ def run_full_wizard() -> None:
     chosen_plugins = [p for p in plugins if p["id"] in selected_ids]
     chosen_has_tab = any(p["id"] == "tab" for p in chosen_plugins)
 
-    ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", 4096)
+    ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", recommended_ram_mb())
 
     section("Summary")
     print(f"  Server software : {server['label']}")
@@ -220,6 +261,8 @@ def run_full_wizard() -> None:
     print(f"  MC version      : {mc_version}")
     print(f"  Install dir     : {server_dir}")
     print(f"  RAM             : {ram_mb} MB")
+    print(f"  Gamemode        : {gamemode}")
+    print(f"  World seed      : {world_seed or '(random)'}")
     print(f"  Plugins         : {', '.join(p['name'] for p in chosen_plugins) or '(none)'}")
     print(f"  TNT duplication : {answers['tnt_dupe']}")
     print(f"  Anti-Xray       : {answers['anti_xray']}" + (f" (mode {answers['anti_xray_mode']})" if answers["anti_xray"] else ""))
@@ -247,6 +290,11 @@ def run_full_wizard() -> None:
             "allow-flight": allow_flight,
             "view-distance": view_distance,
             "simulation-distance": sim_distance,
+            "level-seed": world_seed,
+            "gamemode": gamemode,
+            "spawn-protection": spawn_protection,
+            "allow-nether": allow_nether,
+            "enable-command-block": enable_command_blocks,
         },
     )
     ok("Wrote eula.txt and server.properties")

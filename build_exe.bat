@@ -28,7 +28,6 @@ python -m PyInstaller --onefile --name Blizzards-Server-Installer ^
     --exclude-module cffi --exclude-module zstandard ^
     --exclude-module decimal --exclude-module _decimal ^
     --exclude-module socks --exclude-module zoneinfo --exclude-module _zoneinfo ^
-    --exclude-module unicodedata ^
     installer.py
 
 echo.

@@ -15,8 +15,13 @@ What it does:
   for WorldGuard, etc.).
 - Offers two modes: **Quick start** (latest Paper + a small essentials set -
   TAB, ViaVersion, SimpleTPA - asks only for the server name, folder and RAM)
-  and the original **Full setup** wizard that customizes everything. On Folia,
-  Full setup only offers plugins whose authors ship Folia-compatible builds.
+  and the original **Full setup** wizard that customizes everything (server
+  seed, gamemode, spawn protection, Nether, command blocks and more). On
+  Folia, Full setup only offers plugins whose authors ship Folia-compatible
+  builds.
+- The RAM question is prefilled from your machine's total memory (half of it,
+  capped at 8 GB, never below 1 GB) in both modes - press Enter to accept it
+  or type your own amount.
 - On startup, quietly checks GitHub Releases for a newer installer version
   and prints a hint when one exists (offline installs are unaffected).
 - Asks for a server name (or lets you hit Enter for a default). When TAB is
@@ -45,6 +50,18 @@ run.bat        # Windows
 
 Both scripts install `PyYAML` if it is missing, then start the wizard (HTTP
 uses Python's standard library, so no other runtime dependencies are needed).
+
+Headless / scripted installs use the same entry point with flags (any flag
+switches to an unattended Quick start):
+
+```
+installer.py --quick --dir ./server --name "My Server" --ram 4096
+```
+
+`--dir` defaults to `./server`, `--name` to `Minecraft Server`, and `--ram`
+to the auto-detected suggestion. The install never prompts; a non-empty
+install folder or an unreachable version list fails with a non-zero exit
+code.
 
 **Option 2: standalone .exe** (no Python needed on the target machine).
 Download it from the [latest release](https://github.com/Blizzard1238562/Blizzards-ServerInstaller/releases/latest),
@@ -144,6 +161,12 @@ Shipped:
 - **Folia-aware plugin list.** Full setup offers only Folia-compatible plugins
   when Folia is the server software, instead of a blanket warning.
 - **Installer self-update check.** A startup hint when a newer release exists.
+- **Sensible RAM default.** The RAM question is prefilled from detected system
+  memory (half, capped at 8 GB, min 1 GB) in both modes.
+- **More Full-setup options.** World seed, gamemode, spawn protection, Nether
+  and command blocks.
+- **Unattended CLI flags.** `--quick`, `--dir`, `--name`, `--ram` for
+  scripted or headless installs.
 
 Next up:
 
@@ -160,6 +183,13 @@ Ideas:
 - Management scripts next to `start.bat` / `start.sh`: stop/restart, world
   backups, crash auto-restart.
 - Show a preview of the config changes before the install runs.
+- Initial operators in Full setup (UUIDs needed for online mode).
+- Optional server icon: copy a `server-icon.png` into the install so the
+  server shows a real image in the server list.
+- Re-running the installer on an existing folder offers to update the server
+  jar and plugins to newer builds.
+- Have the start scripts print the public playit.gg address once the tunnel
+  is up (open question in `docs/public-servers.md`).
 
 ## Known limitations
 

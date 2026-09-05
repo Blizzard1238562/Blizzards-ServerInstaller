@@ -7,6 +7,7 @@ system certificate store via ssl.create_default_context().
 
 from __future__ import annotations
 
+import encodings.idna  # noqa: F401  # http.client IDNA-encodes hostnames even for ASCII hosts; importing here forces PyInstaller to bundle the codec (and its unicodedata dependency)
 import gzip
 import json
 import ssl
