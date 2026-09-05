@@ -17,6 +17,9 @@ defaults the wizard would offer, and failures exit with a non-zero code.
   --dir PATH         install folder (default: ./server)
   --name NAME        server name (default: Minecraft Server)
   --ram MB           RAM for the start script (default: auto-detected)
+
+If --dir points at a folder that already contains a Blizzards install, the
+installer refreshes that server instead (newest jar + plugins, configs kept).
 """
 
 import argparse

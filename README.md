@@ -34,7 +34,12 @@ What it does:
   full paper-global.yml by hand, since the config schema changes between
   Minecraft versions.
 - Writes `eula.txt`, `server.properties`, and `start.bat` / `start.sh` with
-  Aikar's flags and the RAM you chose.
+  Aikar's flags and the RAM you chose, plus `stop`, `restart` and `backup`
+  helper scripts (stop/restart target only this server's java process;
+  backup archives the worlds + plugins into `backups/` with a timestamp).
+- Re-running the installer into a server folder it created offers to update
+  that server (newest jar and plugin builds) instead of installing a fresh
+  copy - worlds, configs and start scripts are kept as they are.
 - If Java is not on PATH, the install still completes and writes a
   `MANUAL_CONFIG_NOTES.txt` listing the settings to change by hand.
 
@@ -61,9 +66,11 @@ installer.py --quick --dir ./server --name "My Server" --ram 4096
 ```
 
 `--dir` defaults to `./server`, `--name` to `Minecraft Server`, and `--ram`
-to the auto-detected suggestion. The install never prompts; a non-empty
-install folder or an unreachable version list fails with a non-zero exit
-code.
+to the auto-detected suggestion. The install never prompts; an unreachable
+version list fails with a non-zero exit code, as does a non-empty folder the
+installer did not create. Point `--dir` at a folder the installer *did*
+create and it refreshes that server instead (newest jar + plugins, configs
+kept).
 
 **Option 2: standalone .exe** (no Python needed on the target machine).
 Download it from the [latest release](https://github.com/Blizzard1238562/Blizzards-ServerInstaller/releases/latest),
@@ -92,7 +99,10 @@ A server folder containing:
   player count; SimpleTPA and SimpleHomes get pinned default configs (byte-
   exact copies of what the plugin ships, so behavior can't drift when the
   plugin updates)
-- `start.bat` and `start.sh` with Aikar's flags
+- `start.bat` / `start.sh` (Aikar's flags) plus `stop`, `restart` and
+  `backup` helper scripts
+- `blizzards-installer.json` - a small manifest recording the install, used
+  when you re-run the installer to update this server later
 - `MANUAL_CONFIG_NOTES.txt`, only when Java was not found
 
 ## Releases
@@ -169,6 +179,12 @@ Shipped:
   and command blocks.
 - **Unattended CLI flags.** `--quick`, `--dir`, `--name`, `--ram` for
   scripted or headless installs.
+- **Management scripts.** `stop`/`restart`/`backup` next to the start
+  scripts (target only the server's own java process; backups land in
+  `backups/`).
+- **Re-run to update.** Running the installer into an existing server folder
+  refreshes the jar and plugins while keeping worlds and configs - both in
+  the wizard's Update mode and via the CLI `--dir`.
 
 Next up:
 
@@ -182,14 +198,11 @@ Later:
 
 Ideas:
 
-- Management scripts next to `start.bat` / `start.sh`: stop/restart, world
-  backups, crash auto-restart.
+- Crash auto-restart for the server process.
 - Show a preview of the config changes before the install runs.
 - Initial operators in Full setup (UUIDs needed for online mode).
 - Optional server icon: copy a `server-icon.png` into the install so the
   server shows a real image in the server list.
-- Re-running the installer on an existing folder offers to update the server
-  jar and plugins to newer builds.
 - Have the start scripts print the public playit.gg address once the tunnel
   is up (open question in `docs/public-servers.md`).
 

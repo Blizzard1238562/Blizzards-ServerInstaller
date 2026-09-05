@@ -39,6 +39,7 @@ from blizzards_installer.plugins import (
     write_tab_config,
 )
 from blizzards_installer.presets import PRESETS, write_plugin_presets
+from blizzards_installer.manifest import read_manifest, touch_manifest, write_manifest
 from blizzards_installer.sysinfo import _meminfo_kb, DEFAULT_RAM_MB, recommended_ram_mb, suggest_ram_mb
 from blizzards_installer.update import _parse_version, available_update
 from blizzards_installer.meta import VERSION
@@ -359,6 +360,30 @@ class TestStartScripts(unittest.TestCase):
         write_start_scripts(self.tmpdir, "purpur-1.20.1.jar", 7168)
         bat = (self.tmpdir / "start.bat").read_text(encoding="utf-8")
         self.assertIn("-Xms7168M -Xmx7168M", bat)
+
+    def test_management_scripts_are_written(self):
+        write_start_scripts(self.tmpdir, "paper-1.21.4.jar", 2048)
+        for name in ("stop.bat", "restart.bat", "backup.bat", "stop.sh", "restart.sh", "backup.sh"):
+            self.assertTrue((self.tmpdir / name).exists(), f"missing {name}")
+        stop_bat = (self.tmpdir / "stop.bat").read_text(encoding="utf-8")
+        self.assertIn("paper-1.21.4.jar", stop_bat)
+        self.assertIn("powershell", stop_bat)
+        backup_bat = (self.tmpdir / "backup.bat").read_text(encoding="utf-8")
+        self.assertIn("Compress-Archive", backup_bat)
+        self.assertIn("backups", backup_bat)
+        stop_sh = (self.tmpdir / "stop.sh").read_text(encoding="utf-8")
+        self.assertTrue(stop_sh.startswith("#!/usr/bin/env bash"))
+        self.assertIn(r"paper-1\.21\.4\.jar", stop_sh)  # regex-escaped for pgrep
+        self.assertIn("pkill", stop_sh)
+        backup_sh = (self.tmpdir / "backup.sh").read_text(encoding="utf-8")
+        self.assertTrue(backup_sh.startswith("#!/usr/bin/env bash"))
+        self.assertIn("tar -czf", backup_sh)
+
+    def test_management_scripts_target_the_exact_jar(self):
+        write_start_scripts(self.tmpdir, "folia-1.20.1.jar", 4096)
+        stop_bat = (self.tmpdir / "stop.bat").read_text(encoding="utf-8")
+        self.assertIn("folia-1.20.1.jar", stop_bat)
+        self.assertNotIn("paper-1.21.4.jar", stop_bat)
 
 
 class TestEula(unittest.TestCase):
@@ -783,6 +808,44 @@ class TestTabConfig(unittest.TestCase):
         self.assertIn('- "ꜱᴀʏ \\"ʜɪ\\""', text)
 
 
+class TestManifest(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_write_then_read_roundtrip(self):
+        write_manifest(self.tmpdir, server_type="paper", mc_version="1.21.4", ram_mb=2048,
+                       plugin_ids=["tab", "viaversion"])
+        manifest = read_manifest(self.tmpdir)
+        self.assertIsNotNone(manifest)
+        self.assertEqual(manifest["server_type"], "paper")
+        self.assertEqual(manifest["mc_version"], "1.21.4")
+        self.assertEqual(manifest["ram_mb"], 2048)
+        self.assertEqual(manifest["plugins"], ["tab", "viaversion"])
+        self.assertEqual(manifest["created"], manifest["updated"])
+
+    def test_read_missing_dir_returns_none(self):
+        self.assertIsNone(read_manifest(self.tmpdir))
+
+    def test_read_corrupt_or_foreign_file_returns_none(self):
+        path = self.tmpdir / "blizzards-installer.json"
+        path.write_text("not json{{{", encoding="utf-8")
+        self.assertIsNone(read_manifest(self.tmpdir))
+        path.write_text('{"tool": "someone-else", "server_type": "paper"}', encoding="utf-8")
+        self.assertIsNone(read_manifest(self.tmpdir))
+
+    def test_touch_keeps_created_bumps_updated(self):
+        manifest = write_manifest(self.tmpdir, server_type="paper", mc_version="1.21", ram_mb=1024,
+                                  plugin_ids=[])
+        manifest["created"] = "2020-01-01T00:00:00+00:00"
+        touch_manifest(self.tmpdir, manifest)
+        after = read_manifest(self.tmpdir)
+        self.assertEqual(after["created"], "2020-01-01T00:00:00+00:00")
+        self.assertNotEqual(after["updated"], after["created"])
+
+
 class TestSysInfo(unittest.TestCase):
     def test_meminfo_kb_parsing(self):
         sample = "MemTotal:       16777216 kB\nMemFree:        1000000 kB\n"
@@ -923,6 +986,10 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertTrue((plugins_dir / "simpletpaplugin.jar").exists())
         tab_text = (plugins_dir / "TAB" / "config.yml").read_text(encoding="utf-8")
         self.assertIn('- "ᴀᴜᴛᴏ ꜱᴇʀᴠᴇʀ"', tab_text)
+        # install manifest recorded so the installer can update this server later
+        manifest = read_manifest(server_dir)
+        self.assertEqual(manifest["server_type"], "paper")
+        self.assertEqual(set(manifest["plugins"]), {"tab", "viaversion", "simpletpa"})
 
     def test_unattended_quick_install_refuses_nonempty_dir(self):
         server_dir = Path(tempfile.mkdtemp()) / "existing"
@@ -931,6 +998,58 @@ class TestWizardEndToEnd(unittest.TestCase):
         with patch("blizzards_installer.ui.input", side_effect=AssertionError("must not ask")):
             with self.assertRaises(RuntimeError):
                 run_quick_unattended(server_dir=server_dir)
+
+    def _make_existing_server(self, plugin_ids=("tab", "viaversion", "simpletpa")):
+        """A server that was previously installed by this tool: a world, user-
+        customized configs/scripts, and an install manifest."""
+        server_dir = Path(tempfile.mkdtemp()) / "existing"
+        (server_dir / "world").mkdir(parents=True)
+        (server_dir / "plugins" / "TAB").mkdir(parents=True)
+        (server_dir / "config").mkdir()
+        tab_cfg = server_dir / "plugins" / "TAB" / "config.yml"
+        tab_cfg.write_text("user tweaks\n", encoding="utf-8")
+        (server_dir / "start.bat").write_text("custom start\n", encoding="utf-8")
+        (server_dir / "config" / "paper-global.yml").write_text("_version: 30\n", encoding="utf-8")
+        write_manifest(server_dir, server_type="paper", mc_version="1.21.4", ram_mb=2048,
+                       plugin_ids=list(plugin_ids))
+        return server_dir, tab_cfg
+
+    def test_update_wizard_refreshes_but_preserves_customizations(self):
+        server_dir, tab_cfg = self._make_existing_server()
+        # Update mode is the third menu entry: mode, server folder, confirm.
+        answers = ["3\n", str(server_dir) + "\n", "y\n"]
+        calls = iter(answers)
+        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
+                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
+                patch("blizzards_installer.net.download_file", side_effect=self._fake_download):
+            run_wizard()
+
+        # Server jar + plugin jars were refreshed.
+        self.assertEqual((server_dir / "paper-1.21.4.jar").read_bytes(), b"fake jar")
+        self.assertTrue((server_dir / "plugins" / "tab-was-taken.jar").exists())
+        self.assertTrue((server_dir / "plugins" / "viaversion.jar").exists())
+        # But user customizations are untouched.
+        self.assertEqual(tab_cfg.read_text(encoding="utf-8"), "user tweaks\n")
+        self.assertEqual((server_dir / "start.bat").read_text(encoding="utf-8"), "custom start\n")
+        self.assertEqual((server_dir / "config" / "paper-global.yml").read_text(encoding="utf-8"), "_version: 30\n")
+        self.assertIsNotNone(read_manifest(server_dir))
+
+    def test_update_wizard_aborts_when_folder_has_no_manifest(self):
+        empty = Path(tempfile.mkdtemp())
+        answers = ["3\n", str(empty) + "\n"]
+        calls = iter(answers)
+        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)):
+            run_wizard()  # warns and returns; folder must stay untouched
+        self.assertEqual(list(empty.iterdir()), [])
+
+    def test_unattended_quick_updates_existing_install(self):
+        server_dir, tab_cfg = self._make_existing_server()
+        with patch("blizzards_installer.ui.input", side_effect=AssertionError("must not ask")), \
+                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
+                patch("blizzards_installer.net.download_file", side_effect=self._fake_download):
+            run_quick_unattended(server_dir=server_dir)  # refreshes instead of raising
+        self.assertEqual((server_dir / "paper-1.21.4.jar").read_bytes(), b"fake jar")
+        self.assertEqual(tab_cfg.read_text(encoding="utf-8"), "user tweaks\n")
 
     def test_quick_wizard_installs_essentials_only(self):
         server_dir = Path(tempfile.mkdtemp()) / "quick"

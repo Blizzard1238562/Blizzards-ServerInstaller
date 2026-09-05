@@ -1,10 +1,12 @@
 """The interactive wizard - asks the questions and orchestrates everything
 the user picked (jar download, plugins, config patching, start scripts).
 
-Two modes: Quick start installs the latest Paper with a small set of
+Three modes: Quick start installs the latest Paper with a small set of
 "essential" plugins (flagged in plugins.json) and sensible defaults, asking
 only for the server name, install directory and RAM. Full setup is the
-original step-by-step wizard with every choice exposed.
+original step-by-step wizard with every choice exposed. Update an existing
+server refreshes a previously installed server's jar and plugins, keeping the
+world and configs the user has since changed.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .config import apply_gameplay_config, write_eula, write_server_properties
+from .manifest import MANIFEST_NAME, read_manifest, touch_manifest, write_manifest
 from .plugins import (
     install_plugins,
     load_plugin_registry,
@@ -44,16 +47,22 @@ TAB_NAME_COLORS = [
     ("Light purple", "&d"),
 ]
 
-MODE_LABELS = ["Quick start - essentials only (recommended)", "Full setup - customize everything"]
+MODE_LABELS = [
+    "Quick start - essentials only (recommended)",
+    "Full setup - customize everything",
+    "Update an existing server",
+]
 
 
 def run_wizard() -> None:
     section("Setup mode")
-    quick = ask_choice("How do you want to set up your server?", MODE_LABELS, default_index=0) == 0
-    if quick:
+    mode = ask_choice("What do you want to do?", MODE_LABELS, default_index=0)
+    if mode == 0:
         run_quick_wizard()
-    else:
+    elif mode == 1:
         run_full_wizard()
+    else:
+        run_update_wizard()
 
 
 def _choose_install_dir() -> Path | None:
@@ -61,6 +70,11 @@ def _choose_install_dir() -> Path | None:
     default_dir = str(Path.cwd() / "server")
     server_dir = Path(ask_text("Install directory", default_dir)).expanduser().resolve()
     if server_dir.exists() and any(server_dir.iterdir()):
+        if read_manifest(server_dir) is not None:
+            warn(
+                "This folder was installed by the Blizzards installer - to refresh an existing "
+                "server, pick 'Update an existing server' in the Setup mode menu instead."
+            )
         if not ask_yes_no(f"'{server_dir}' already exists and isn't empty. Continue anyway?", default=False):
             info("Aborted.")
             return None
@@ -109,13 +123,20 @@ def run_quick_unattended(
 
     Never prompts: missing values fall back to the same defaults the wizard
     would offer. Raises RuntimeError instead of asking when something needs a
-    decision (non-empty install folder, unreachable version list)."""
+    decision (unreachable version list). If the target folder already holds an
+    install made by this tool, the existing server is updated (jar + plugins
+    refreshed) instead; a non-empty folder without one is refused."""
     section("Setup mode")
     info("Running an unattended Quick start install.")
     target = (server_dir or Path.cwd() / "server").expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
     if any(target.iterdir()):
-        raise RuntimeError(f"Install directory is not empty - refusing to touch it: {target}")
+        manifest = read_manifest(target)
+        if manifest is None:
+            raise RuntimeError(f"Install directory is not empty - refusing to touch it: {target}")
+        info("Found an existing Blizzards install - refreshing the server jar and plugins.")
+        update_existing_server(target, manifest)
+        return
     name = server_name or "Minecraft Server"
     ram = ram_mb or recommended_ram_mb()
     try:
@@ -165,12 +186,103 @@ def _quick_install(server_name: str, server_dir: Path, ram_mb: int, mc_version: 
 
     section("Start scripts")
     write_start_scripts(server_dir, jar_name, ram_mb)
+    write_manifest(
+        server_dir,
+        server_type="paper",
+        mc_version=mc_version,
+        ram_mb=ram_mb,
+        plugin_ids=[p["id"] for p in chosen_plugins],
+    )
 
     section("Done")
     ok(f"Server installed at: {server_dir}")
     info("Run start.bat (Windows) or ./start.sh (Linux/Mac) inside that folder to launch it.")
     if chosen_has_tab:
         info("TAB tablist set to your server name - edit plugins/TAB/config.yml to tweak it (then /tab reload).")
+
+
+def run_update_wizard() -> None:
+    """Update a server this installer created: refresh the server jar and
+    plugin jars to their newest builds, keeping worlds, configs and start
+    scripts untouched (the user may have customized them since)."""
+    section("Update an existing server")
+    info("Point me at the folder of a server that was installed with the Blizzards installer.")
+    default_dir = str(Path.cwd() / "server")
+    server_dir = Path(ask_text("Server folder", default_dir)).expanduser().resolve()
+    manifest = read_manifest(server_dir)
+    if manifest is None:
+        warn(f"No Blizzards install found in '{server_dir}' (no {MANIFEST_NAME} manifest). "
+             "Run Quick start or Full setup to install a new server instead.")
+        return
+    server_type = manifest.get("server_type")
+    mc_version = manifest.get("mc_version")
+    server = SERVER_TYPES.get(server_type) if isinstance(server_type, str) else None
+    if server is None or not isinstance(mc_version, str) or not mc_version:
+        error("The install manifest in that folder is incomplete - install a fresh server instead.")
+        return
+    plugin_ids = manifest.get("plugins") or []
+    plugins, _categories = load_plugin_registry()
+    by_id = {p["id"]: p for p in plugins}
+    known = [by_id[i] for i in plugin_ids if i in by_id]
+
+    section("Found an existing server")
+    print(f"  Server software : {server['label']}")
+    print(f"  MC version      : {mc_version}")
+    print(f"  Plugins         : {', '.join(p['name'] for p in known) or '(none recorded)'}")
+    print(f"  Server folder   : {server_dir}")
+    if not ask_yes_no(
+        f"Refresh the {server['label']} {mc_version} server jar and its plugins to the newest "
+        "builds? Your world, configs and start scripts will be kept.",
+        True,
+    ):
+        info("Aborted.")
+        return
+    try:
+        update_existing_server(server_dir, manifest)
+    except RuntimeError as exc:
+        error(str(exc))
+
+
+def update_existing_server(server_dir: Path, manifest: dict) -> None:
+    """Refresh an existing install: re-download the newest server jar build
+    and each recorded plugin jar. Never touches worlds, configs or start
+    scripts. Raises RuntimeError on a locked jar or an unusable manifest."""
+    server_type = manifest.get("server_type")
+    mc_version = manifest.get("mc_version")
+    plugin_ids = manifest.get("plugins") or []
+    if not isinstance(server_type, str) or server_type not in SERVER_TYPES \
+            or not isinstance(mc_version, str) or not mc_version:
+        raise RuntimeError("The install manifest in this folder is incomplete - "
+                           "install a fresh server instead (Quick start / Full setup).")
+    server = SERVER_TYPES[server_type]
+
+    plugins, _categories = load_plugin_registry()
+    by_id = {p["id"]: p for p in plugins}
+    known = [by_id[i] for i in plugin_ids if i in by_id]
+    stale = [str(i) for i in plugin_ids if i not in by_id]
+    if stale:
+        warn(f"{len(stale)} recorded plugin(s) are no longer offered and were left as-is: "
+             f"{', '.join(stale)}.")
+
+    section("Updating server jar")
+    jar_name = f"{server_type}-{mc_version}.jar"
+    try:
+        download_server_jar(server_type, mc_version, server_dir / jar_name)
+    except PermissionError as exc:
+        raise RuntimeError("Could not overwrite the server jar - is the server still running? "
+                           "Type 'stop' in its console (or close it) and try again.") from exc
+
+    section("Updating plugins")
+    plugins_dir = server_dir / "plugins"
+    plugins_dir.mkdir(exist_ok=True)
+    if known:
+        install_plugins(known, mc_version, server["modrinth_loader"], plugins_dir)
+
+    touch_manifest(server_dir, manifest)
+
+    section("Done")
+    ok(f"Updated {server['label']} {mc_version}: server jar and {len(known)} plugin(s) refreshed.")
+    info("Your world, configs and start scripts were kept. Restart the server to apply the updates.")
 
 
 def run_full_wizard() -> None:
@@ -312,6 +424,13 @@ def run_full_wizard() -> None:
 
     section("Start scripts")
     write_start_scripts(server_dir, jar_name, ram_mb)
+    write_manifest(
+        server_dir,
+        server_type=server_type,
+        mc_version=mc_version,
+        ram_mb=ram_mb,
+        plugin_ids=[p["id"] for p in chosen_plugins],
+    )
 
     section("Public access (optional)")
     if ask_yes_no("Make this server joinable by others without port forwarding (playit.gg)?", False):
