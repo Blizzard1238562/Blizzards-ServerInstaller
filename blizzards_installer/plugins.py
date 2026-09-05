@@ -1,0 +1,125 @@
+"""Plugin registry loading + Modrinth downloads.
+
+The plugin list itself lives in plugins.json (next to installer.py), not in
+code - see its _comment field for how entries map to Modrinth projects.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Optional
+
+from . import net
+from .ui import error, info, ok, section, warn
+
+MODRINTH_API = "https://api.modrinth.com/v2"
+
+
+def _data_base() -> Path:
+    """Directory to look for bundled data files in. When PyInstaller freezes
+    this into a onefile .exe, bundled data (plugins.json) is extracted to a
+    temp dir exposed as sys._MEIPASS at runtime - a plain __file__ lookup
+    would fail there. In development this module sits in the
+    blizzards_installer/ package folder, so the registry is one level up."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent.parent
+
+
+PLUGIN_REGISTRY_PATH = _data_base() / "plugins.json"
+
+
+def load_plugin_registry() -> tuple[list[dict], dict]:
+    with open(PLUGIN_REGISTRY_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data["plugins"], data.get("categories", {})
+
+
+def resolve_dependencies(selected_ids: set[str], plugins_by_id: dict[str, dict]) -> set[str]:
+    """Pull in any 'requires' dependencies for the chosen plugins (recursively),
+    printing a note so the user knows why something extra got installed."""
+    resolved = set(selected_ids)
+    changed = True
+    while changed:
+        changed = False
+        for pid in list(resolved):
+            for dep in plugins_by_id[pid].get("requires", []):
+                if dep not in resolved:
+                    resolved.add(dep)
+                    info(f"'{plugins_by_id[pid]['name']}' requires '{plugins_by_id[dep]['name']}' - adding it too.")
+                    changed = True
+    return resolved
+
+
+def _primary_file(files: list[dict]) -> Optional[dict]:
+    """Pick the download entry Modrinth marks as primary, else the first."""
+    if not files:
+        return None
+    return next((f for f in files if f.get("primary")), files[0])
+
+
+def get_modrinth_plugin_download(slug: str, mc_version: str, loader: str) -> tuple[str, str]:
+    """Return (download_url, filename) for the newest compatible version of a
+    Modrinth project, preferring an exact game-version + loader match and
+    falling back to a loader-only match (newest) with a warning if needed."""
+
+    def _pick(versions: list[dict]) -> Optional[dict]:
+        if not versions:
+            return None
+        rank = {"release": 0, "beta": 1, "alpha": 2}
+        # Two stable sorts: newest-first within each stability tier, then
+        # group by tier (release preferred over beta/alpha).
+        by_date = sorted(versions, key=lambda v: v.get("date_published", ""), reverse=True)
+        by_tier = sorted(by_date, key=lambda v: rank.get(v.get("version_type", "release"), 3))
+        return by_tier[0]
+
+    params_exact = {
+        "loaders": json.dumps([loader]),
+        "game_versions": json.dumps([mc_version]),
+    }
+    versions = net.http_get_json_optional(f"{MODRINTH_API}/project/{slug}/version", params=params_exact)
+    chosen = _pick(versions) if isinstance(versions, list) else None
+
+    if not chosen:
+        warn(f"No build of '{slug}' targets Minecraft {mc_version} exactly - grabbing the newest {loader} build instead.")
+        params_loose = {"loaders": json.dumps([loader])}
+        versions = net.http_get_json_optional(f"{MODRINTH_API}/project/{slug}/version", params=params_loose)
+        chosen = _pick(versions) if isinstance(versions, list) else None
+
+    if not chosen:
+        raise RuntimeError(f"No downloadable versions found for Modrinth project '{slug}'.")
+
+    primary = _primary_file(chosen.get("files", []))
+    if not primary:
+        raise RuntimeError(f"'{slug}' has a matching version but no files attached.")
+    return primary["url"], primary["filename"]
+
+
+def install_plugins(chosen: list[dict], mc_version: str, loader: str, plugins_dir: Path) -> list[dict]:
+    section("Installing plugins")
+    installed = []
+    for plugin in chosen:
+        try:
+            info(f"Fetching latest '{plugin['name']}' for {mc_version}...")
+            url, filename = get_modrinth_plugin_download(plugin["modrinth_slug"], mc_version, loader)
+            net.download_file(url, plugins_dir / filename, filename)
+            installed.append(plugin)
+        except Exception as exc:
+            error(f"Failed to install {plugin['name']}: {exc}")
+    return installed
+
+
+def write_tab_placeholder(server_dir: Path) -> None:
+    tab_dir = server_dir / "plugins" / "TAB"
+    tab_dir.mkdir(parents=True, exist_ok=True)
+    placeholder = tab_dir / "config.yml"
+    placeholder.write_text(
+        "# PLACEHOLDER CONFIG - generated by Blizzards Server Installer.\n"
+        "# TAB has NOT been configured yet. Drop your real TAB config.yml in\n"
+        "# this folder (plugins/TAB/config.yml), replacing this file, then\n"
+        "# restart the server for it to take effect.\n",
+        encoding="utf-8",
+    )
+    ok("Created plugins/TAB/config.yml placeholder (replace with the real config later)")

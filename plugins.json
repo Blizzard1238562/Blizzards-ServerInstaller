@@ -1,0 +1,148 @@
+{
+  "_comment": "Registry of optional plugins offered during setup. modrinth_slug must match the project slug at modrinth.com/plugin/<slug>. Add new entries here to extend the wizard - no code changes needed. 'requires' lists other plugin ids that will be silently force-installed as dependencies if this one is chosen.",
+  "categories": {
+    "core": "Core / Foundation",
+    "protection": "Protection & Anti-Grief",
+    "gameplay": "Gameplay & Quality of Life",
+    "crossplay": "Compatibility & Cross-play",
+    "ops": "Server Operations"
+  },
+  "plugins": [
+    {
+      "id": "luckperms",
+      "name": "LuckPerms",
+      "modrinth_slug": "luckperms",
+      "category": "core",
+      "question": "Install LuckPerms (permissions & group management)?",
+      "default": true,
+      "requires": []
+    },
+    {
+      "id": "vault",
+      "name": "Vault",
+      "modrinth_slug": "vault",
+      "category": "core",
+      "question": "Install Vault (economy/permissions API bridge, needed by many other plugins)?",
+      "default": true,
+      "requires": []
+    },
+    {
+      "id": "essentialsx",
+      "name": "EssentialsX",
+      "modrinth_slug": "essentialsx",
+      "category": "core",
+      "question": "Install EssentialsX (homes, warps, kits, tpa, core commands)?",
+      "default": true,
+      "requires": ["vault"]
+    },
+    {
+      "id": "tab",
+      "name": "TAB",
+      "modrinth_slug": "tab-was-taken",
+      "category": "gameplay",
+      "question": "Install TAB and configure it (tablist, nametags, scoreboard)?",
+      "default": false,
+      "requires": [],
+      "placeholder_config": true
+    },
+    {
+      "id": "placeholderapi",
+      "name": "PlaceholderAPI",
+      "modrinth_slug": "placeholderapi",
+      "category": "gameplay",
+      "question": "Install PlaceholderAPI (placeholder support used by TAB, Essentials, etc.)?",
+      "default": false,
+      "requires": []
+    },
+    {
+      "id": "coreprotect",
+      "name": "CoreProtect",
+      "modrinth_slug": "coreprotect",
+      "category": "protection",
+      "question": "Install CoreProtect (block logging & rollback anti-grief tool)?",
+      "default": true,
+      "requires": []
+    },
+    {
+      "id": "worldedit",
+      "name": "WorldEdit",
+      "modrinth_slug": "worldedit",
+      "category": "protection",
+      "question": "Install WorldEdit (in-game world editing)?",
+      "default": false,
+      "requires": []
+    },
+    {
+      "id": "worldguard",
+      "name": "WorldGuard",
+      "modrinth_slug": "worldguard",
+      "category": "protection",
+      "question": "Install WorldGuard (region protection, requires WorldEdit)?",
+      "default": false,
+      "requires": ["worldedit"]
+    },
+    {
+      "id": "multiverse-core",
+      "name": "Multiverse-Core",
+      "modrinth_slug": "multiverse-core",
+      "category": "gameplay",
+      "question": "Install Multiverse-Core (manage multiple worlds)?",
+      "default": false,
+      "requires": []
+    },
+    {
+      "id": "chunky",
+      "name": "Chunky",
+      "modrinth_slug": "chunky",
+      "category": "ops",
+      "question": "Install Chunky (fast world/chunk pre-generation)?",
+      "default": false,
+      "requires": []
+    },
+    {
+      "id": "viaversion",
+      "name": "ViaVersion",
+      "modrinth_slug": "viaversion",
+      "category": "crossplay",
+      "question": "Install ViaVersion (let newer Minecraft clients join an older server version)?",
+      "default": false,
+      "requires": []
+    },
+    {
+      "id": "geyser",
+      "name": "Geyser",
+      "modrinth_slug": "geyser",
+      "category": "crossplay",
+      "question": "Install Geyser (allow Bedrock Edition players to join)?",
+      "default": false,
+      "requires": []
+    },
+    {
+      "id": "floodgate",
+      "name": "Floodgate",
+      "modrinth_slug": "floodgate",
+      "category": "crossplay",
+      "question": "Install Floodgate (lets Bedrock players join without a Java account, requires Geyser)?",
+      "default": false,
+      "requires": ["geyser"]
+    },
+    {
+      "id": "spark",
+      "name": "spark",
+      "modrinth_slug": "spark",
+      "category": "ops",
+      "question": "Install spark (performance profiler for diagnosing lag)?",
+      "default": true,
+      "requires": []
+    },
+    {
+      "id": "dynmap",
+      "name": "Dynmap",
+      "modrinth_slug": "dynmap",
+      "category": "ops",
+      "question": "Install Dynmap (live web map of your world)?",
+      "default": false,
+      "requires": []
+    }
+  ]
+}

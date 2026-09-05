@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# PyInstaller build output
+build/
+dist/
+*.spec
+
+# Local scratch / verification folders
+.verify/
+.remote_probe/
+
+# Environment files
+.env
