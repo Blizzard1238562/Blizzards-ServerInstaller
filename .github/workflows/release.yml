@@ -1,7 +1,9 @@
 name: Release
 
-# Pushing a version tag (e.g. v1.2.0) builds the Windows exe and publishes a
-# GitHub Release with it attached. See the README "Releases" section.
+# Pushing a version tag (e.g. v1.2.0 or v1.2.0-alpha.1) builds the installer
+# natively on Windows, Linux and macOS (PyInstaller cannot cross-compile) and
+# publishes a GitHub Release with all three binaries attached. Tags
+# containing -alpha/-beta/-rc are published as prereleases.
 on:
   push:
     tags:
@@ -11,9 +13,22 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build exe and publish release
-    runs-on: windows-latest
+  build:
+    name: Build ${{ matrix.asset_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            separator: ";"
+            asset_name: Blizzards-Server-Installer-windows-x64.exe
+          - os: ubuntu-latest
+            separator: ":"
+            asset_name: Blizzards-Server-Installer-linux-x64
+          - os: macos-latest
+            separator: ":"
+            asset_name: Blizzards-Server-Installer-macos-arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,9 +37,35 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install -r requirements.txt
       - name: Build with PyInstaller
-        run: python -m PyInstaller --noconfirm --onefile --name Blizzards-Server-Installer --add-data 'plugins.json;.' --console installer.py
+        run: python -m PyInstaller --noconfirm --onefile --name "${{ matrix.asset_name }}" --add-data "plugins.json${{ matrix.separator }}." --console installer.py
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect built binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" "dist/Blizzards-Server-Installer.exe" --generate-notes
+          mapfile -t assets < <(ls assets/* 2>/dev/null)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No binaries found in the assets folder"
+            exit 1
+          fi
+          prerelease=""
+          case "$GITHUB_REF_NAME" in
+            *-alpha*|*-beta*|*-rc*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" $prerelease --generate-notes
