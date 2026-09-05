@@ -1,5 +1,7 @@
 # Blizzards Server Installer
 
+### This Project is Vastly Vibe-Coded and was first meant only for personal use.
+
 An interactive installer that sets up a Minecraft server. You pick the server
 software (Paper, Purpur, Pufferfish or Folia) and Minecraft version, choose
 plugins, and answer a few yes/no questions about gameplay settings. It then
