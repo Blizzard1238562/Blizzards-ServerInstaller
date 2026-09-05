@@ -12,7 +12,7 @@ from .plugins import (
     resolve_dependencies,
     write_tab_placeholder,
 )
-from .public import install_agent, open_claim_console, write_public_files
+from .public import install_agent, open_claim_console, store_secret, write_public_files
 from .scripts import write_start_scripts
 from .serverjar import SERVER_TYPES, download_server_jar
 from .ui import ask_choice, ask_int, ask_text, ask_yes_no, error, info, ok, section, warn
@@ -145,8 +145,25 @@ def run_wizard() -> None:
     if ask_yes_no("Make this server joinable by others without port forwarding (playit.gg)?", False):
         try:
             agent_path = install_agent(server_dir)
+            linked = False
+            if ask_yes_no(
+                "Link automatically with an agent secret key? You can create one at "
+                "playit.gg > Agents > Add Agent and paste it here (or say no to claim "
+                "in a browser window instead).",
+                False,
+            ):
+                secret = ask_text("Paste the playit.gg agent secret key")
+                if secret.strip():
+                    store_secret(server_dir, secret)
+                    linked = True
+                    ok("Secret saved to playit/secret.key - start-public.bat/sh will connect automatically.")
+                else:
+                    warn("No secret pasted - claiming via the agent window instead.")
             write_public_files(server_dir, jar_name, ram_mb)
-            open_claim_console(agent_path)
+            if linked:
+                info("Open the playit dashboard, add a Minecraft Java tunnel (TCP, 127.0.0.1:25565) and share the address it shows.")
+            else:
+                open_claim_console(agent_path)
         except Exception as exc:
             error(f"Could not set up playit.gg: {exc}")
             warn("Your server still works locally - run start.bat / ./start.sh to launch it.")

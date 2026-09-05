@@ -27,12 +27,14 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 from . import net
 from .scripts import _aikars_flags
 from .ui import info, ok, warn
 
 PLAYIT_RELEASES_API = "https://api.github.com/repos/playit-cloud/playit-agent/releases/latest"
+SECRET_FILENAME = "secret.key"
 
 _LINUX_ARCH_ASSETS = {
     "amd64": "amd64",
@@ -127,16 +129,68 @@ def _agent_name_and_path(server_dir: Path) -> tuple[str, Path]:
     return files[0].name, files[0]
 
 
+def secret_path(server_dir: Path) -> Path:
+    """Where the dashboard 'Add Agent' secret key is stored (playit/secret.key)."""
+    return server_dir / "playit" / SECRET_FILENAME
+
+
+# playit secret keys are tokens; keeping them to a safe charset also means a
+# pasted key can never break the generated start scripts.
+_SECRET_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~")
+
+
+def store_secret(server_dir: Path, secret: str) -> Optional[Path]:
+    """Store a playit 'Add Agent' secret key so the agent links automatically.
+    Returns the file path, None for an empty/whitespace secret, and raises
+    ValueError for secrets containing characters that could break the
+    generated scripts."""
+    secret = secret.strip()
+    if not secret:
+        return None
+    if any(ch not in _SECRET_CHARS for ch in secret):
+        raise ValueError("The secret key contains unsupported characters.")
+    path = secret_path(server_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(secret + "\n", encoding="utf-8")
+    if os.name != "nt":
+        os.chmod(path, 0o600)
+    return path
+
+
+def _read_secret(server_dir: Path) -> Optional[str]:
+    path = secret_path(server_dir)
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8").strip() or None
+
+
 def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
-    """Write start-public.bat/sh (agent + server) and PUBLIC_SERVER.txt."""
+    """Write start-public.bat/sh (agent + server) and PUBLIC_SERVER.txt.
+
+    When a secret key is stored (see store_secret) the launchers start the
+    agent with the key inline via --secret, so the agent links automatically;
+    otherwise the agent is started normally and shows its one-time claim
+    window on first run."""
     agent_name, _agent_path = _agent_name_and_path(server_dir)
     flags = _aikars_flags(ram_mb)
+    secret = _read_secret(server_dir)
+
+    if secret:
+        start_line_bat = (
+            f'start "Blizzards Server - playit tunnel" "{server_dir / "playit" / agent_name}" '
+            f'--secret "{secret}"\r\n'
+        )
+        start_line_sh = f'("./playit/{agent_name}" --secret "{secret}" &)\n'
+    else:
+        start_line_bat = f'start "Blizzards Server - playit tunnel" "{server_dir / "playit" / agent_name}"\r\n'
+        start_line_sh = f'("./playit/{agent_name}" &)\n'
 
     (server_dir / "start-public.bat").write_text(
         "@echo off\r\n"
-        f'start "Blizzards Server - playit tunnel" "{server_dir / "playit" / agent_name}"\r\n'
-        f"java {flags} -jar \"{jar_name}\" --nogui\r\n"
-        "pause\r\n",
+        "setlocal\r\n"
+        + start_line_bat
+        + f"java {flags} -jar \"{jar_name}\" --nogui\r\n"
+        + "pause\r\n",
         encoding="utf-8",
     )
 
@@ -144,8 +198,8 @@ def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     sh.write_text(
         "#!/usr/bin/env bash\n"
         "cd \"$(dirname \"$0\")\"\n"
-        f'("./playit/{agent_name}" &)\n'
-        f'java {flags} -jar "{jar_name}" --nogui\n',
+        + start_line_sh
+        + f'java {flags} -jar "{jar_name}" --nogui\n',
         encoding="utf-8",
     )
     try:
@@ -162,12 +216,18 @@ def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
         "traffic to playit's network so players can join without you opening any\n"
         "ports on your router.\n"
         "\n"
-        "First time only - claim the agent:\n"
-        "  Option A: run start-public.bat (Windows) / ./start-public.sh (Linux).\n"
-        "    The agent window will ask you to log in or create a free playit.gg\n"
-        "    account once. After that it stays linked on this machine.\n"
-        "  Option B: open https://playit.gg, go to Agents -> Add Agent, copy the\n"
-        "    secret key, and follow the on-screen steps to link this machine.\n"
+        "Linking the agent (first time only):\n"
+        "  Option A (no account yet): run start-public.bat (Windows) /\n"
+        "    ./start-public.sh (Linux). The agent window will ask you to log in\n"
+        "    or create a free playit.gg account once; after that it stays\n"
+        "    linked on this machine.\n"
+        "  Option B (recommended, done during setup): in the installer, choose\n"
+        "    to link with a secret. On https://playit.gg go to Agents -> Add\n"
+        "    Agent, copy the secret key, and paste it in the installer. It is\n"
+        "    stored in playit/secret.key and start-public uses it to connect\n"
+        "    automatically.\n"
+        "  Option C (manual): create playit/secret.key next to the agent\n"
+        "    containing the secret key, then run start-public as usual.\n"
         "\n"
         "Then expose the server:\n"
         "  1. In the playit.gg dashboard, find your agent and create a tunnel:\n"

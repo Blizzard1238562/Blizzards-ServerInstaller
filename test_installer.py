@@ -38,6 +38,7 @@ from blizzards_installer.public import (
     agent_asset,
     install_agent,
     open_claim_console,
+    store_secret,
     write_public_files,
 )
 from blizzards_installer.scripts import write_start_scripts
@@ -635,7 +636,7 @@ class TestPublicIntegration(unittest.TestCase):
         finally:
             shutil.rmtree(server_dir, ignore_errors=True)
 
-    def test_write_public_files(self):
+    def test_write_public_files_without_secret(self):
         server_dir = Path(tempfile.mkdtemp())
         try:
             playit_dir = server_dir / "playit"
@@ -646,12 +647,59 @@ class TestPublicIntegration(unittest.TestCase):
             self.assertIn("playit-linux-amd64", bat)
             self.assertIn('-jar "paper-1.21.4.jar" --nogui', bat)
             self.assertIn("-Xms2048M -Xmx2048M", bat)
+            self.assertNotIn("--secret", bat)
             sh = (server_dir / "start-public.sh").read_text(encoding="utf-8")
             self.assertIn('"./playit/playit-linux-amd64"', sh)
+            self.assertNotIn("--secret", sh)
             self.assertTrue(sh.startswith("#!/usr/bin/env bash"))
             notes = (server_dir / "PUBLIC_SERVER.txt").read_text(encoding="utf-8")
             self.assertIn("playit.gg", notes)
             self.assertIn("127.0.0.1:25565", notes)
+        finally:
+            shutil.rmtree(server_dir, ignore_errors=True)
+
+    def test_write_public_files_with_secret_embeds_key(self):
+        server_dir = Path(tempfile.mkdtemp())
+        try:
+            playit_dir = server_dir / "playit"
+            playit_dir.mkdir()
+            (playit_dir / "playit-linux-amd64").write_bytes(b"agent")
+            store_secret(server_dir, "secret_abc-123")
+            write_public_files(server_dir, "paper-1.21.4.jar", 2048)
+            bat = (server_dir / "start-public.bat").read_text(encoding="utf-8")
+            self.assertIn('--secret "secret_abc-123"', bat)
+            sh = (server_dir / "start-public.sh").read_text(encoding="utf-8")
+            self.assertIn('--secret "secret_abc-123"', sh)
+            self.assertIn('-jar "paper-1.21.4.jar" --nogui', sh)
+        finally:
+            shutil.rmtree(server_dir, ignore_errors=True)
+
+    def test_store_secret_validates_and_chmods(self):
+        server_dir = Path(tempfile.mkdtemp())
+        try:
+            (server_dir / "playit").mkdir()
+            with patch("blizzards_installer.public.os.name", "posix"), \
+                    patch("blizzards_installer.public.os.chmod") as mock_chmod:
+                path = store_secret(server_dir, " abc-123.def ")
+            self.assertIsNotNone(path)
+            self.assertEqual(path.read_text(encoding="utf-8"), "abc-123.def\n")
+            mock_chmod.assert_called_once_with(path, 0o600)
+        finally:
+            shutil.rmtree(server_dir, ignore_errors=True)
+
+    def test_store_secret_empty_returns_none(self):
+        server_dir = Path(tempfile.mkdtemp())
+        try:
+            self.assertIsNone(store_secret(server_dir, "   "))
+            self.assertFalse((server_dir / "playit" / "secret.key").exists())
+        finally:
+            shutil.rmtree(server_dir, ignore_errors=True)
+
+    def test_store_secret_rejects_dangerous_chars(self):
+        server_dir = Path(tempfile.mkdtemp())
+        try:
+            with self.assertRaises(ValueError):
+                store_secret(server_dir, "abc&echo pwned")
         finally:
             shutil.rmtree(server_dir, ignore_errors=True)
 
