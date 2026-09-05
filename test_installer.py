@@ -34,6 +34,12 @@ from blizzards_installer.plugins import (
     load_plugin_registry,
     resolve_dependencies,
 )
+from blizzards_installer.public import (
+    agent_asset,
+    install_agent,
+    open_claim_console,
+    write_public_files,
+)
 from blizzards_installer.scripts import write_start_scripts
 from blizzards_installer.serverjar import (
     _find_jar_url,
@@ -577,6 +583,97 @@ class TestStopServer(unittest.TestCase):
         mock_killpg.assert_not_called()
 
 
+class TestPublicIntegration(unittest.TestCase):
+    ASSETS = [
+        {"name": "playit-windows-x86_64-signed.exe", "browser_download_url": "https://x/win-signed.exe"},
+        {"name": "playit-windows-x86_64.exe", "browser_download_url": "https://x/win.exe"},
+        {"name": "playit-windows-x86-signed.exe", "browser_download_url": "https://x/win32-signed.exe"},
+        {"name": "playit-linux-amd64", "browser_download_url": "https://x/linux-amd64"},
+        {"name": "playit-linux-aarch64", "browser_download_url": "https://x/linux-aarch64"},
+    ]
+
+    @patch("blizzards_installer.net.http_get_json")
+    def test_windows_prefers_signed_x64(self, mock_get):
+        mock_get.return_value = {"assets": self.ASSETS}
+        with patch("sys.platform", "win32"), patch("platform.machine", return_value="AMD64"):
+            name, url = agent_asset()
+        self.assertEqual(name, "playit-windows-x86_64-signed.exe")
+        self.assertEqual(url, "https://x/win-signed.exe")
+
+    @patch("blizzards_installer.net.http_get_json")
+    def test_linux_amd64_asset(self, mock_get):
+        mock_get.return_value = {"assets": self.ASSETS}
+        with patch("sys.platform", "linux"), patch("platform.machine", return_value="x86_64"):
+            name, _ = agent_asset()
+        self.assertEqual(name, "playit-linux-amd64")
+
+    @patch("blizzards_installer.net.http_get_json")
+    def test_macos_not_on_github_raises(self, mock_get):
+        mock_get.return_value = {"assets": self.ASSETS}
+        with patch("sys.platform", "darwin"):
+            with self.assertRaises(RuntimeError):
+                agent_asset()
+
+    @patch("blizzards_installer.net.http_get_json")
+    def test_no_matching_asset_raises(self, mock_get):
+        mock_get.return_value = {"assets": []}
+        with patch("sys.platform", "win32"), patch("platform.machine", return_value="AMD64"):
+            with self.assertRaises(RuntimeError):
+                agent_asset()
+
+    def test_install_agent_downloads_into_playit_dir(self):
+        server_dir = Path(tempfile.mkdtemp())
+        try:
+            with patch("blizzards_installer.public.agent_asset", return_value=("playit-linux-amd64", "https://x/agent")), \
+                    patch("blizzards_installer.net.download_file") as mock_dl, \
+                    patch("blizzards_installer.public.os.name", "posix"), \
+                    patch("blizzards_installer.public.os.chmod") as mock_chmod:
+                dest = install_agent(server_dir)
+            self.assertEqual(dest, server_dir / "playit" / "playit-linux-amd64")
+            mock_dl.assert_called_once_with("https://x/agent", dest, "playit.gg agent")
+            mock_chmod.assert_called_once_with(dest, 0o755)
+        finally:
+            shutil.rmtree(server_dir, ignore_errors=True)
+
+    def test_write_public_files(self):
+        server_dir = Path(tempfile.mkdtemp())
+        try:
+            playit_dir = server_dir / "playit"
+            playit_dir.mkdir()
+            (playit_dir / "playit-linux-amd64").write_bytes(b"agent")
+            write_public_files(server_dir, "paper-1.21.4.jar", 2048)
+            bat = (server_dir / "start-public.bat").read_text(encoding="utf-8")
+            self.assertIn("playit-linux-amd64", bat)
+            self.assertIn('-jar "paper-1.21.4.jar" --nogui', bat)
+            self.assertIn("-Xms2048M -Xmx2048M", bat)
+            sh = (server_dir / "start-public.sh").read_text(encoding="utf-8")
+            self.assertIn('"./playit/playit-linux-amd64"', sh)
+            self.assertTrue(sh.startswith("#!/usr/bin/env bash"))
+            notes = (server_dir / "PUBLIC_SERVER.txt").read_text(encoding="utf-8")
+            self.assertIn("playit.gg", notes)
+            self.assertIn("127.0.0.1:25565", notes)
+        finally:
+            shutil.rmtree(server_dir, ignore_errors=True)
+
+    @patch("blizzards_installer.public.subprocess.Popen")
+    def test_open_claim_console_windows(self, mock_popen):
+        agent = Path("C:/playit/playit-windows-x86_64-signed.exe")
+        with patch("sys.platform", "win32"):
+            self.assertTrue(open_claim_console(agent))
+        mock_popen.assert_called_once()
+        self.assertEqual(mock_popen.call_args.args[0], [str(agent)])
+        self.assertEqual(
+            mock_popen.call_args.kwargs["creationflags"],
+            getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10),
+        )
+
+    @patch("blizzards_installer.public.subprocess.Popen")
+    def test_open_claim_console_nonwindows_prints_instructions(self, mock_popen):
+        with patch("sys.platform", "linux"):
+            self.assertFalse(open_claim_console(Path("/x/playit-linux-amd64")))
+        mock_popen.assert_not_called()
+
+
 class TestWizardEndToEnd(unittest.TestCase):
     """Drives the real run_wizard() with only the network/bootstrap mocked:
     exercises the full question flow, registry loading, downloads, TAB
@@ -650,6 +747,10 @@ class TestWizardEndToEnd(unittest.TestCase):
         world_text = (server_dir / "config" / "paper-world-defaults.yml").read_text(encoding="utf-8")
         self.assertIn("enabled: true", world_text)
         self.assertFalse((server_dir / "MANUAL_CONFIG_NOTES.txt").exists())
+        # The public-access question defaults to no: nothing playit-related
+        # may be created unless the user opts in.
+        self.assertFalse((server_dir / "playit").exists())
+        self.assertFalse((server_dir / "start-public.bat").exists())
 
 
 if __name__ == "__main__":

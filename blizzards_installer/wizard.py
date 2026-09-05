@@ -12,9 +12,10 @@ from .plugins import (
     resolve_dependencies,
     write_tab_placeholder,
 )
+from .public import install_agent, open_claim_console, write_public_files
 from .scripts import write_start_scripts
 from .serverjar import SERVER_TYPES, download_server_jar
-from .ui import ask_choice, ask_int, ask_text, ask_yes_no, info, ok, section, warn
+from .ui import ask_choice, ask_int, ask_text, ask_yes_no, error, info, ok, section, warn
 from .versions import choose_minecraft_version
 
 DIFFICULTIES = ["peaceful", "easy", "normal", "hard"]
@@ -139,6 +140,16 @@ def run_wizard() -> None:
 
     section("Start scripts")
     write_start_scripts(server_dir, jar_name, ram_mb)
+
+    section("Public access (optional)")
+    if ask_yes_no("Make this server joinable by others without port forwarding (playit.gg)?", False):
+        try:
+            agent_path = install_agent(server_dir)
+            write_public_files(server_dir, jar_name, ram_mb)
+            open_claim_console(agent_path)
+        except Exception as exc:
+            error(f"Could not set up playit.gg: {exc}")
+            warn("Your server still works locally - run start.bat / ./start.sh to launch it.")
 
     section("Done")
     ok(f"Server installed at: {server_dir}")

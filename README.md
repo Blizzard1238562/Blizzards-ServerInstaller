@@ -122,9 +122,9 @@ network calls mocked.
 Next up:
 
 - **Public servers.** After an install, expose the server so players can join
-  through a friendly play.gg-style address (a tunnel service such as play.gg)
-  instead of a raw `IP:port`. Evaluation of play.gg and similar services comes
-  first.
+  through a friendly playit.gg address instead of a raw `IP:port`, no port
+  forwarding or public IP needed. Design and service evaluation live in
+  [docs/public-servers.md](docs/public-servers.md).
 - **Config presets for plugins.** Ship real default configs for the offered
   plugins, starting with TAB (which currently only gets a placeholder), so a
   fresh server works without manual setup.
