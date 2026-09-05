@@ -5,6 +5,7 @@ mcjars.app, modrinth.com, or Mojang's servers anyway) - instead they feed
 realistic fixture JSON/YAML through the functions to make sure nothing
 throws and the output is what we expect. Run with: python3 test_installer.py
 """
+import base64
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,7 @@ from blizzards_installer.plugins import (
     small_caps,
     write_tab_config,
 )
+from blizzards_installer.presets import PRESETS, write_plugin_presets
 from blizzards_installer.public import (
     agent_asset,
     install_agent,
@@ -752,10 +754,40 @@ class TestTabConfig(unittest.TestCase):
         self.assertIn('- "ꜱᴀʏ \\"ʜɪ\\""', text)
 
 
+class TestPresetConfigs(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_presets_cover_known_blizzard_plugins(self):
+        self.assertIn("simpletpa", PRESETS)
+        self.assertIn("simplehomes", PRESETS)
+        # folder names must match what the plugin's plugin.yml creates on disk
+        self.assertEqual(PRESETS["simpletpa"][0], "SimpleTPA")
+        self.assertEqual(PRESETS["simplehomes"][0], "Simplehomes")
+
+    def test_write_plugin_presets_writes_decodable_files(self):
+        chosen = [{"id": "simpletpa", "name": "SimpleTPA"}, {"id": "simplehomes", "name": "SimpleHomes"}]
+        write_plugin_presets(self.tmpdir, chosen)
+        tpa = (self.tmpdir / "plugins" / "SimpleTPA" / "config.yml").read_bytes()
+        homes = (self.tmpdir / "plugins" / "Simplehomes" / "config.yml").read_bytes()
+        self.assertEqual(tpa, base64.b64decode(PRESETS["simpletpa"][2]))
+        self.assertEqual(homes, base64.b64decode(PRESETS["simplehomes"][2]))
+        self.assertTrue(tpa.startswith(b"settings:"))
+        self.assertTrue(homes.startswith(b"max-homes:"))
+
+    def test_write_plugin_presets_skips_unknown_plugins(self):
+        chosen = [{"id": "dynmap", "name": "Dynmap"}]
+        write_plugin_presets(self.tmpdir, chosen)
+        self.assertFalse((self.tmpdir / "plugins").exists())
+
+
 class TestWizardEndToEnd(unittest.TestCase):
     """Drives the real run_wizard() with only the network/bootstrap mocked:
-    exercises the full question flow, registry loading, downloads, TAB
-    config generation, config patching and start scripts (2 GB RAM)."""
+    exercises the Quick and Full question flows, registry loading, downloads,
+    TAB config generation, config presets, config patching and start scripts."""
 
     def _fake_get_json(self, url, params=None):
         if "piston-meta" in url:
@@ -782,19 +814,65 @@ class TestWizardEndToEnd(unittest.TestCase):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"fake jar")
 
+    def test_quick_wizard_installs_essentials_only(self):
+        server_dir = Path(tempfile.mkdtemp()) / "quick"
+        # Prompt order in Quick mode: mode (default = Quick), server name,
+        # install dir, RAM. Everything else is decided for you.
+        answers = [
+            "\n",  # mode -> Quick start (index 0)
+            "My Quick Server\n",
+            str(server_dir) + "\n",
+            "\n",  # RAM -> default 4096
+        ]
+
+        calls = iter(answers)
+        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
+                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
+                patch("blizzards_installer.net.download_file", side_effect=self._fake_download), \
+                patch("blizzards_installer.config.bootstrap_configs") as mock_bootstrap:
+            run_wizard()
+        mock_bootstrap.assert_not_called()  # Quick mode skips the config bootstrap
+
+        # MOTD comes from the server name; no extra questions were asked.
+        props = (server_dir / "server.properties").read_text(encoding="utf-8")
+        self.assertIn("motd=My Quick Server", props)
+        self.assertIn("eula=true", (server_dir / "eula.txt").read_text(encoding="utf-8"))
+        self.assertTrue((server_dir / "paper-1.21.4.jar").exists())
+        self.assertIn("-Xms4096M -Xmx4096M", (server_dir / "start.bat").read_text(encoding="utf-8"))
+        self.assertIn("-Xms4096M -Xmx4096M", (server_dir / "start.sh").read_text(encoding="utf-8"))
+
+        # Only the essential plugins (registry "essential": true) landed.
+        plugins_dir = server_dir / "plugins"
+        self.assertTrue((plugins_dir / "tab-was-taken.jar").exists())
+        self.assertTrue((plugins_dir / "viaversion.jar").exists())
+        self.assertTrue((plugins_dir / "simpletpaplugin.jar").exists())
+        self.assertFalse((plugins_dir / "luckperms.jar").exists())
+        self.assertFalse((plugins_dir / "essentialsx.jar").exists())
+
+        # TAB tablist uses the entered server name; SimpleTPA gets its preset.
+        tab_text = (plugins_dir / "TAB" / "config.yml").read_text(encoding="utf-8")
+        self.assertIn('- "ᴍʏ ǫᴜɪᴄᴋ ꜱᴇʀᴠᴇʀ"', tab_text)
+        self.assertTrue((plugins_dir / "SimpleTPA" / "config.yml").exists())
+
+        # No Paper config bootstrap ran, no playit files were created.
+        self.assertFalse((server_dir / "config").exists())
+        self.assertFalse((server_dir / "MANUAL_CONFIG_NOTES.txt").exists())
+        self.assertFalse((server_dir / "playit").exists())
+
     def test_full_wizard_install_with_2g_ram_and_tab(self):
         server_dir = Path(tempfile.mkdtemp()) / "server"
-        # One input per wizard prompt, in ask order (see run_wizard): software,
-        # version, dir, server name, name color, motd, max players, difficulty,
-        # online/whitelist/pvp/hardcore/flight, view/sim distance, TNT dupe,
-        # block break, headless pistons, anti-xray(+mode), 15 plugins, RAM,
-        # proceed, playit. Defaults ("\n") answer everything unless overridden.
-        answers = ["\n"] * 38
-        answers[2] = str(server_dir) + "\n"  # install directory
-        answers[4] = "2\n"  # server name color -> index 1 = Gray (&7)
-        answers[15] = "y\n"  # allow TNT duplication -> patched to true below
-        answers[23] = "y\n"  # install TAB (4th plugin prompt)
-        answers[35] = "2048\n"  # RAM for the start scripts
+        # One input per wizard prompt, in ask order (see run_full_wizard): mode,
+        # software, version, dir, server name, name color, motd, max players,
+        # difficulty, online/whitelist/pvp/hardcore/flight, view/sim distance,
+        # TNT dupe, block break, headless pistons, anti-xray(+mode), 17 plugin
+        # prompts, RAM, proceed, playit. Defaults ("\n") answer the rest.
+        answers = ["\n"] * 41
+        answers[0] = "2\n"  # mode -> Full setup (index 1)
+        answers[3] = str(server_dir) + "\n"  # install directory
+        answers[5] = "2\n"  # server name color -> index 1 = Gray (&7)
+        answers[16] = "y\n"  # allow TNT duplication -> patched to true below
+        answers[24] = "y\n"  # install TAB (4th plugin prompt)
+        answers[38] = "2048\n"  # RAM for the start scripts
 
         def fake_bootstrap(dir_path, jar_path):
             TestApplyGameplayConfig._write_fixture_configs(dir_path)

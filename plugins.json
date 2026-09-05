@@ -42,7 +42,8 @@
       "category": "gameplay",
       "question": "Install TAB and set a minimal tablist showing your server name (small caps)?",
       "default": false,
-      "requires": []
+      "requires": [],
+      "essential": true
     },
     {
       "id": "placeholderapi",
@@ -105,7 +106,8 @@
       "category": "crossplay",
       "question": "Install ViaVersion (let newer Minecraft clients join an older server version)?",
       "default": false,
-      "requires": []
+      "requires": [],
+      "essential": true
     },
     {
       "id": "geyser",
@@ -140,6 +142,25 @@
       "modrinth_slug": "dynmap",
       "category": "ops",
       "question": "Install Dynmap (live web map of your world)?",
+      "default": false,
+      "requires": []
+    },
+    {
+      "id": "simpletpa",
+      "name": "SimpleTPA",
+      "modrinth_slug": "simpletpaplugin",
+      "category": "gameplay",
+      "question": "Install SimpleTPA (lightweight /tpa, /tpahere and /tpaccept requests)?",
+      "default": false,
+      "requires": [],
+      "essential": true
+    },
+    {
+      "id": "simplehomes",
+      "name": "SimpleHomes",
+      "modrinth_slug": "simplehomesplugin",
+      "category": "gameplay",
+      "question": "Install SimpleHomes (per-player /sethome and /home)?",
       "default": false,
       "requires": []
     }

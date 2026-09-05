@@ -13,6 +13,9 @@ What it does:
 - Fetches the newest compatible build of each chosen plugin from Modrinth and
   adds required dependencies automatically (Vault for EssentialsX, WorldEdit
   for WorldGuard, etc.).
+- Offers two modes: **Quick start** (latest Paper + a small essentials set -
+  TAB, ViaVersion, SimpleTPA - asks only for the server name, folder and RAM)
+  and the original **Full setup** wizard that customizes everything.
 - Asks for a server name (or lets you hit Enter for a default). When TAB is
   installed, the name is shown at the top of the tablist in Minecraft "small
   font" (Unicode small caps, e.g. ᴍʏ ꜱᴇʀᴠᴇʀ) in a color of your choice.
@@ -64,7 +67,9 @@ A server folder containing:
   Paper and patched (the `unsupported-settings` toggles and anti-xray)
 - `plugins/` with the plugins you chose. TAB gets a real, minimal `config.yml`
   whose tablist header shows your server name in small caps with an online
-  player count
+  player count; SimpleTPA and SimpleHomes get pinned default configs (byte-
+  exact copies of what the plugin ships, so behavior can't drift when the
+  plugin updates)
 - `start.bat` and `start.sh` with Aikar's flags
 - `MANUAL_CONFIG_NOTES.txt`, only when Java was not found
 
@@ -123,22 +128,27 @@ network calls mocked.
 
 ## Roadmap
 
-Next up:
+Shipped:
 
 - **Public servers.** After an install, expose the server so players can join
   through a friendly playit.gg address instead of a raw `IP:port`, no port
   forwarding or public IP needed. Design and service evaluation live in
   [docs/public-servers.md](docs/public-servers.md).
-- **Config presets for plugins.** Ship real default configs for the rest of
-  the offered plugins (TAB already gets a minimal small-font tablist config),
-  so a fresh server works without manual setup.
+- **Plugin config presets.** TAB gets a minimal small-font tablist config;
+  SimpleTPA and SimpleHomes get pinned default configs so a fresh server
+  works without manual setup.
+- **Quick start mode.** One screen to a working server with the essentials.
+
+Next up:
+
+- Config presets for the remaining offered plugins.
+- Folia-aware plugin list: filter plugins by the chosen server software instead
+  of warning that most plugins will not run on Folia.
 
 Later:
 
 - Support for more server software (Vanilla, Spigot) with config patching for
   their layouts.
-- Folia-aware plugin list: filter plugins by the chosen server software instead
-  of warning that most plugins will not run on Folia.
 - A simple GUI around the wizard.
 
 Ideas:

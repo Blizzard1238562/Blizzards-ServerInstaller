@@ -1,22 +1,29 @@
 """The interactive wizard - asks the questions and orchestrates everything
-the user picked (jar download, plugins, config patching, start scripts)."""
+the user picked (jar download, plugins, config patching, start scripts).
+
+Two modes: Quick start installs the latest Paper with a small set of
+"essential" plugins (flagged in plugins.json) and sensible defaults, asking
+only for the server name, install directory and RAM. Full setup is the
+original step-by-step wizard with every choice exposed.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from .config import apply_gameplay_config, write_server_properties, write_eula
+from .config import apply_gameplay_config, write_eula, write_server_properties
 from .plugins import (
     install_plugins,
     load_plugin_registry,
     resolve_dependencies,
     write_tab_config,
 )
+from .presets import write_plugin_presets
 from .public import install_agent, open_claim_console, store_secret, write_public_files
 from .scripts import write_start_scripts
 from .serverjar import SERVER_TYPES, download_server_jar
 from .ui import ask_choice, ask_int, ask_text, ask_yes_no, error, info, ok, section, warn
-from .versions import choose_minecraft_version
+from .versions import choose_minecraft_version, get_recent_release_versions
 
 DIFFICULTIES = ["peaceful", "easy", "normal", "hard"]
 
@@ -34,8 +41,102 @@ TAB_NAME_COLORS = [
     ("Light purple", "&d"),
 ]
 
+MODE_LABELS = ["Quick start - essentials only (recommended)", "Full setup - customize everything"]
+
 
 def run_wizard() -> None:
+    section("Setup mode")
+    quick = ask_choice("How do you want to set up your server?", MODE_LABELS, default_index=0) == 0
+    if quick:
+        run_quick_wizard()
+    else:
+        run_full_wizard()
+
+
+def _choose_install_dir() -> Path | None:
+    """Ask for the install directory; None means the user aborted."""
+    default_dir = str(Path.cwd() / "server")
+    server_dir = Path(ask_text("Install directory", default_dir)).expanduser().resolve()
+    if server_dir.exists() and any(server_dir.iterdir()):
+        if not ask_yes_no(f"'{server_dir}' already exists and isn't empty. Continue anyway?", default=False):
+            info("Aborted.")
+            return None
+    server_dir.mkdir(parents=True, exist_ok=True)
+    return server_dir
+
+
+def _latest_release_or_manual() -> str:
+    """Latest stable Minecraft release; falls back to a manual entry when the
+    Mojang manifest cannot be reached (offline installs still work)."""
+    try:
+        recent = get_recent_release_versions(limit=1)
+        if recent:
+            return recent[0]
+    except Exception as exc:
+        warn(f"Could not reach Mojang's version list ({exc}).")
+    return ask_text("Enter the Minecraft version (e.g. 1.21.4)")
+
+
+def run_quick_wizard() -> None:
+    """Bare-bones setup: latest Paper, name + RAM, and the essential plugins
+    only (flagged `"essential": true` in plugins.json). No per-plugin or
+    gameplay questions, no config bootstrap - Paper generates its config on
+    the first real start."""
+    info(
+        "Quick start installs the latest Paper with a small set of essentials "
+        "(TAB, ViaVersion, SimpleTPA) and sensible defaults. Pick Full setup "
+        "to customize everything."
+    )
+    server_name = ask_text("Server name", "Minecraft Server")
+    server_dir = _choose_install_dir()
+    if server_dir is None:
+        return
+    ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", 4096)
+    mc_version = _latest_release_or_manual()
+
+    plugins, _categories = load_plugin_registry()
+    plugins_by_id = {p["id"]: p for p in plugins}
+    essential_ids = {p["id"] for p in plugins if p.get("essential")}
+    essential_ids = resolve_dependencies(essential_ids, plugins_by_id)
+    chosen_plugins = [p for p in plugins if p["id"] in essential_ids]
+    chosen_has_tab = any(p["id"] == "tab" for p in chosen_plugins)
+
+    section("Summary")
+    print(f"  Server software : {SERVER_TYPES['paper']['label']}")
+    print(f"  Server name     : {server_name}")
+    print(f"  MC version      : {mc_version}")
+    print(f"  Install dir     : {server_dir}")
+    print(f"  RAM             : {ram_mb} MB")
+    print(f"  Plugins         : {', '.join(p['name'] for p in chosen_plugins)}")
+
+    section("Downloading server jar")
+    jar_name = f"paper-{mc_version}.jar"
+    jar_path = server_dir / jar_name
+    download_server_jar("paper", mc_version, jar_path)
+
+    section("Writing base config")
+    write_eula(server_dir)
+    write_server_properties(server_dir, {"motd": server_name})
+    ok("Wrote eula.txt and server.properties (MOTD is your server name)")
+
+    plugins_dir = server_dir / "plugins"
+    plugins_dir.mkdir(exist_ok=True)
+    install_plugins(chosen_plugins, mc_version, SERVER_TYPES["paper"]["modrinth_loader"], plugins_dir)
+    if chosen_has_tab:
+        write_tab_config(server_dir, server_name, "")
+    write_plugin_presets(server_dir, chosen_plugins)
+
+    section("Start scripts")
+    write_start_scripts(server_dir, jar_name, ram_mb)
+
+    section("Done")
+    ok(f"Server installed at: {server_dir}")
+    info("Run start.bat (Windows) or ./start.sh (Linux/Mac) inside that folder to launch it.")
+    if chosen_has_tab:
+        info("TAB tablist set to your server name - edit plugins/TAB/config.yml to tweak it (then /tab reload).")
+
+
+def run_full_wizard() -> None:
     section("Server basics")
     type_keys = list(SERVER_TYPES.keys())
     type_labels = [SERVER_TYPES[k]["label"] for k in type_keys]
@@ -52,13 +153,9 @@ def run_wizard() -> None:
         )
     mc_version = choose_minecraft_version()
 
-    default_dir = str(Path.cwd() / "server")
-    server_dir = Path(ask_text("Install directory", default_dir)).expanduser().resolve()
-    if server_dir.exists() and any(server_dir.iterdir()):
-        if not ask_yes_no(f"'{server_dir}' already exists and isn't empty. Continue anyway?", default=False):
-            info("Aborted.")
-            return
-    server_dir.mkdir(parents=True, exist_ok=True)
+    server_dir = _choose_install_dir()
+    if server_dir is None:
+        return
 
     section("Basic server settings")
     server_name = ask_text("Server name", "Minecraft Server")
@@ -157,6 +254,7 @@ def run_wizard() -> None:
         install_plugins(chosen_plugins, mc_version, server["modrinth_loader"], plugins_dir)
     if chosen_has_tab:
         write_tab_config(server_dir, server_name, name_color)
+    write_plugin_presets(server_dir, chosen_plugins)
 
     section("Generating Paper config")
     apply_gameplay_config(server_dir, jar_path, answers)
