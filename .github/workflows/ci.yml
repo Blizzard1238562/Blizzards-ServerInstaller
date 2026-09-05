@@ -16,7 +16,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install runtime dependencies
-        run: python -m pip install requests ruamel.yaml
+        run: python -m pip install pyyaml
       - name: Run test suite
         run: python test_installer.py
 
@@ -30,8 +30,11 @@ jobs:
           python-version: "3.12"
       - name: Install build dependencies
         run: python -m pip install -r requirements.txt
+      # Excluded modules are never used by this console-only app (no
+      # GUI/tests/async) - they only bloat the bundle. The only third-party
+      # runtime dependency is PyYAML, which is small and stays.
       - name: Build with PyInstaller
-        run: python -m PyInstaller --noconfirm --onefile --name Blizzards-Server-Installer --add-data 'plugins.json;.' --console installer.py
+        run: python -m PyInstaller --noconfirm --onefile --name Blizzards-Server-Installer --add-data 'plugins.json;.' --console installer.py --exclude-module setuptools --exclude-module pkg_resources --exclude-module pip --exclude-module numpy --exclude-module unittest --exclude-module pydoc --exclude-module pydoc_data --exclude-module doctest --exclude-module lib2to3 --exclude-module http.server --exclude-module socketserver --exclude-module asyncio --exclude-module multiprocessing --exclude-module curses --exclude-module xmlrpc --exclude-module tkinter --exclude-module ensurepip --exclude-module idlelib --exclude-module cryptography --exclude-module OpenSSL --exclude-module cffi --exclude-module zstandard --exclude-module decimal --exclude-module _decimal --exclude-module socks --exclude-module zoneinfo --exclude-module _zoneinfo --exclude-module unicodedata
       - name: Upload exe artifact
         uses: actions/upload-artifact@v4
         with:

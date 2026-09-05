@@ -5,7 +5,6 @@ mcjars.app, modrinth.com, or Mojang's servers anyway) - instead they feed
 realistic fixture JSON/YAML through the functions to make sure nothing
 throws and the output is what we expect. Run with: python3 test_installer.py
 """
-import requests
 import shutil
 import subprocess
 import sys
@@ -33,6 +32,8 @@ from blizzards_installer.plugins import (
     install_plugins,
     load_plugin_registry,
     resolve_dependencies,
+    small_caps,
+    write_tab_config,
 )
 from blizzards_installer.public import (
     agent_asset,
@@ -140,9 +141,7 @@ class TestModrinthDownload(unittest.TestCase):
         # Modrinth answers unsupported loader/version combos with HTTP 404
         # instead of an empty list - that must route into the loose fallback,
         # not abort the install.
-        resp = MagicMock()
-        resp.status_code = 404
-        not_found = requests.HTTPError("404 Client Error", response=resp)
+        not_found = net_mod.HTTPError("https://x", 404)
         mock_get.side_effect = [
             not_found,
             [{"version_type": "release", "date_published": "2024-01-01", "files": [{"primary": True, "url": "https://cdn/y.jar", "filename": "y.jar"}]}],
@@ -155,15 +154,13 @@ class TestModrinthDownload(unittest.TestCase):
 class TestHttpOptional(unittest.TestCase):
     @patch("blizzards_installer.net.http_get_json")
     def test_swallows_404(self, mock_get):
-        resp = MagicMock()
-        resp.status_code = 404
-        mock_get.side_effect = requests.HTTPError("404", response=resp)
+        mock_get.side_effect = net_mod.HTTPError("https://x", 404)
         self.assertIsNone(net_mod.http_get_json_optional("https://x"))
 
     @patch("blizzards_installer.net.http_get_json")
     def test_propagates_other_errors(self, mock_get):
-        mock_get.side_effect = requests.ConnectionError("boom")
-        with self.assertRaises(requests.ConnectionError):
+        mock_get.side_effect = net_mod.ConnectionError("boom")
+        with self.assertRaises(net_mod.ConnectionError):
             net_mod.http_get_json_optional("https://x")
 
     @patch("blizzards_installer.net.http_get_json")
@@ -722,10 +719,43 @@ class TestPublicIntegration(unittest.TestCase):
         mock_popen.assert_not_called()
 
 
+class TestTabConfig(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_small_caps_maps_letters_keeps_digits(self):
+        self.assertEqual(small_caps("Minecraft Server 123"), "ᴍɪɴᴇᴄʀᴀꜰᴛ ꜱᴇʀᴠᴇʀ 123")
+
+    def test_small_caps_leaves_unmapped_chars_alone(self):
+        # x has no small-cap form and stays as-is; digits/punctuation pass through.
+        self.assertEqual(small_caps("xXyY!"), "xxʏʏ!")
+
+    def test_writes_minimal_tablist_with_server_name(self):
+        write_tab_config(self.tmpdir, "Test Server")
+        text = (self.tmpdir / "plugins" / "TAB" / "config.yml").read_text(encoding="utf-8")
+        self.assertIn("header-footer:", text)
+        self.assertIn('- "ᴛᴇꜱᴛ ꜱᴇʀᴠᴇʀ"', text)
+        self.assertIn('"&7Online: %online%"', text)
+        self.assertIn("footer: []", text)
+
+    def test_color_code_prefixes_name_line(self):
+        write_tab_config(self.tmpdir, "Test Server", "&6")
+        text = (self.tmpdir / "plugins" / "TAB" / "config.yml").read_text(encoding="utf-8")
+        self.assertIn('- "&6ᴛᴇꜱᴛ ꜱᴇʀᴠᴇʀ"', text)
+
+    def test_quotes_in_name_are_yaml_escaped(self):
+        write_tab_config(self.tmpdir, 'Say "hi"')
+        text = (self.tmpdir / "plugins" / "TAB" / "config.yml").read_text(encoding="utf-8")
+        self.assertIn('- "ꜱᴀʏ \\"ʜɪ\\""', text)
+
+
 class TestWizardEndToEnd(unittest.TestCase):
     """Drives the real run_wizard() with only the network/bootstrap mocked:
     exercises the full question flow, registry loading, downloads, TAB
-    placeholder config, config patching and start scripts (2 GB RAM)."""
+    config generation, config patching and start scripts (2 GB RAM)."""
 
     def _fake_get_json(self, url, params=None):
         if "piston-meta" in url:
@@ -754,9 +784,17 @@ class TestWizardEndToEnd(unittest.TestCase):
 
     def test_full_wizard_install_with_2g_ram_and_tab(self):
         server_dir = Path(tempfile.mkdtemp()) / "server"
-        answers = ["\n"] * 21 + ["y\n"] + ["\n"] * 11 + ["2048\n", "\n"] + ["\n"] * 5
+        # One input per wizard prompt, in ask order (see run_wizard): software,
+        # version, dir, server name, name color, motd, max players, difficulty,
+        # online/whitelist/pvp/hardcore/flight, view/sim distance, TNT dupe,
+        # block break, headless pistons, anti-xray(+mode), 15 plugins, RAM,
+        # proceed, playit. Defaults ("\n") answer everything unless overridden.
+        answers = ["\n"] * 38
         answers[2] = str(server_dir) + "\n"  # install directory
-        answers[13] = "y\n"  # allow TNT duplication -> patched to true below
+        answers[4] = "2\n"  # server name color -> index 1 = Gray (&7)
+        answers[15] = "y\n"  # allow TNT duplication -> patched to true below
+        answers[23] = "y\n"  # install TAB (4th plugin prompt)
+        answers[35] = "2048\n"  # RAM for the start scripts
 
         def fake_bootstrap(dir_path, jar_path):
             TestApplyGameplayConfig._write_fixture_configs(dir_path)
@@ -775,17 +813,22 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertIn("-Xms2048M -Xmx2048M", bat)
         self.assertIn("-Xms2048M -Xmx2048M", sh)
 
-        # Base files + server jar landed.
+        # Base files + server jar landed. The server name stays separate from the
+        # MOTD (its own question) and only feeds the TAB tablist config below.
         self.assertIn("eula=true", (server_dir / "eula.txt").read_text(encoding="utf-8"))
         props = (server_dir / "server.properties").read_text(encoding="utf-8")
         self.assertIn("online-mode=true", props)
         self.assertIn("difficulty=easy", props)
+        self.assertIn("motd=A Minecraft Server", props)
         self.assertTrue((server_dir / "paper-1.21.4.jar").exists())
 
-        # TAB was selected -> placeholder config written; plugin jars downloaded.
+        # TAB was selected -> minimal config with the (default) server name in
+        # small caps prefixed with the chosen gray color; plugin jars downloaded.
         tab_cfg = server_dir / "plugins" / "TAB" / "config.yml"
         self.assertTrue(tab_cfg.exists())
-        self.assertIn("PLACEHOLDER CONFIG", tab_cfg.read_text(encoding="utf-8"))
+        tab_text = tab_cfg.read_text(encoding="utf-8")
+        self.assertIn('- "&7ᴍɪɴᴇᴄʀᴀꜰᴛ ꜱᴇʀᴠᴇʀ"', tab_text)
+        self.assertIn('"&7Online: %online%"', tab_text)
         self.assertTrue((server_dir / "plugins" / "luckperms.jar").exists())
         self.assertTrue((server_dir / "plugins" / "spark.jar").exists())
 

@@ -10,7 +10,7 @@ from .plugins import (
     install_plugins,
     load_plugin_registry,
     resolve_dependencies,
-    write_tab_placeholder,
+    write_tab_config,
 )
 from .public import install_agent, open_claim_console, store_secret, write_public_files
 from .scripts import write_start_scripts
@@ -19,6 +19,20 @@ from .ui import ask_choice, ask_int, ask_text, ask_yes_no, error, info, ok, sect
 from .versions import choose_minecraft_version
 
 DIFFICULTIES = ["peaceful", "easy", "normal", "hard"]
+
+# (label, legacy color code) for the TAB tablist header. Empty code = plain
+# white, i.e. no color prefix.
+TAB_NAME_COLORS = [
+    ("White", ""),
+    ("Gray", "&7"),
+    ("Gold", "&6"),
+    ("Yellow", "&e"),
+    ("Green", "&a"),
+    ("Aqua", "&b"),
+    ("Light blue", "&9"),
+    ("Red", "&c"),
+    ("Light purple", "&d"),
+]
 
 
 def run_wizard() -> None:
@@ -47,6 +61,14 @@ def run_wizard() -> None:
     server_dir.mkdir(parents=True, exist_ok=True)
 
     section("Basic server settings")
+    server_name = ask_text("Server name", "Minecraft Server")
+    name_color = TAB_NAME_COLORS[
+        ask_choice(
+            "Color for your server name in the TAB tablist (small-font header, only if you install TAB)",
+            [f"{label} ({code})" if code else label for label, code in TAB_NAME_COLORS],
+            default_index=0,
+        )
+    ][1]
     motd = ask_text("Server MOTD", "A Minecraft Server")
     max_players = ask_int("Max players", 20)
     difficulty = DIFFICULTIES[ask_choice("Difficulty", DIFFICULTIES, default_index=1)]
@@ -94,6 +116,7 @@ def run_wizard() -> None:
 
     section("Summary")
     print(f"  Server software : {server['label']}")
+    print(f"  Server name     : {server_name}")
     print(f"  MC version      : {mc_version}")
     print(f"  Install dir     : {server_dir}")
     print(f"  RAM             : {ram_mb} MB")
@@ -133,7 +156,7 @@ def run_wizard() -> None:
     if chosen_plugins:
         install_plugins(chosen_plugins, mc_version, server["modrinth_loader"], plugins_dir)
     if chosen_has_tab:
-        write_tab_placeholder(server_dir)
+        write_tab_config(server_dir, server_name, name_color)
 
     section("Generating Paper config")
     apply_gameplay_config(server_dir, jar_path, answers)
@@ -172,4 +195,4 @@ def run_wizard() -> None:
     ok(f"Server installed at: {server_dir}")
     info("Run start.bat (Windows) or ./start.sh (Linux/Mac) inside that folder to launch it.")
     if chosen_has_tab:
-        info("Remember to drop your real TAB config into plugins/TAB/config.yml.")
+        info("TAB tablist set to your server name - edit plugins/TAB/config.yml to tweak it (then /tab reload).")

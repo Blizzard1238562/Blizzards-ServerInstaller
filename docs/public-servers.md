@@ -1,8 +1,10 @@
 # Public servers without port forwarding (playit.gg)
 
 Status: MVP implemented in `blizzards_installer/public.py` and wired into the
-wizard as an opt-in step. Facts below were verified live on 2026-09-05
-against playit.gg and its v1.0.10 agent (downloaded and run once on Windows).
+wizard as an opt-in step. Claiming is automated via a dashboard secret key
+(stored locally, passed to the agent with `--secret`); the interactive claim
+window remains as a fallback. Facts below were verified live on 2026-09-05
+against playit.gg and its v1.0.10 agent (downloaded and run on Windows).
 
 ## Goal
 
@@ -90,21 +92,24 @@ others without port forwarding (playit.gg)?" Default no. If yes:
    be mocked in tests). Windows picks the signed x64 exe; Linux picks the
    amd64/aarch64/armv7/i686 binary by CPU. Unsupported platforms (macOS)
    fail cleanly with instructions.
-2. On Windows, launch the agent in its own console window so the user can
-   claim it (login or create a free account once). On other platforms, print
-   instructions to run the agent once from a terminal. The dashboard "Add
-   Agent" secret route is documented as an alternative.
-3. Write `start-public.bat` / `start-public.sh` that start the playit agent
-   and then the server, plus a `PUBLIC_SERVER.txt` with the remaining steps:
-   create the tunnel in the dashboard (Minecraft Java, TCP,
-   `127.0.0.1:25565`) and share the assigned address.
+2. Ask whether the user wants to link automatically. If yes, they paste the
+   dashboard "Add Agent" secret key (Agents -> Add Agent on playit.gg); it is
+   stored in `server/playit/secret.key` (chmod 600 on POSIX, restricted to a
+   safe charset) and never sent anywhere.
+3. Write `start-public.bat` / `start-public.sh` that start the agent and then
+   the server, plus a `PUBLIC_SERVER.txt` with the remaining steps. When the
+   secret is present the launchers start the agent with `--secret <key>`
+   (verified in v1.0.10 help output), so it links automatically; otherwise
+   the agent is started plainly and shows its one-time claim window.
 4. The normal `start.bat` / `start.sh` stay untouched. Declining the question
    creates no extra files. Any failure warns and the install still completes.
 
 Module: `blizzards_installer/public.py`. Wizard hook in `run_wizard`, after
 the start scripts and before the done banner. Covered by unit tests (asset
-selection per OS, download path, script contents, claim launcher behavior,
-decline path).
+selection per OS, download path, secret validation/storage, script contents
+with and without a secret, claim launcher behavior, decline path) and a real
+end-to-end install run (agent downloaded from GitHub, secret stored, scripts
+written, install completed).
 
 ### Acceptance criteria (MVP)
 
@@ -119,13 +124,15 @@ decline path).
 
 ## Open questions / later work
 
-- macOS: find where playit publishes macOS agents (site download only?) and
-  add support.
-- Read the `%LOCALAPPDATA%\playit_gg\playit.toml` schema and test whether we
-  can link an agent by writing the dashboard's "Add Agent" secret key into it
-  directly, which would remove the interactive claim step.
+- The dashboard secret key itself still requires a (free) playit account; the
+  installer cannot create one on the user's behalf. The interactive claim
+  window covers users without an account.
+- Tunnel creation stays a dashboard step: playit exposes no public API for it
+  and acting on the user's account would be a consent problem anyway.
 - Whether the agent can report its assigned public address to stdout (so a
   launcher could print "share this address" instead of pointing at the
   dashboard).
+- macOS: find where playit publishes macOS agents (site download only?) and
+  add support.
 - Check playit's terms for bundling/automating agent setup before scaling the
   feature up.

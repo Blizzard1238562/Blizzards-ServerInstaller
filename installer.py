@@ -3,25 +3,20 @@
 
 The actual code lives in the blizzards_installer/ package (see its docstring
 for a module map); this file only checks dependencies, runs the wizard and
-handles top-level errors. Requires: Python 3.9+, `requests`, `ruamel.yaml`
-(see requirements.txt). A JDK/JRE on PATH is required to auto-generate
-Paper's default config files during install - if Java isn't found, the
-installer still works, it just leaves a short note on what to change by hand.
+handles top-level errors. Requires: Python 3.9+, `PyYAML` (see
+requirements.txt); HTTP uses the standard library. A JDK/JRE on PATH is
+required to auto-generate Paper's default config files during install - if
+Java isn't found, the installer still works, it just leaves a short note on
+what to change by hand.
 """
 
 import sys
 import traceback
 
 try:
-    import requests  # noqa: F401
+    import yaml  # noqa: F401
 except ImportError:
-    print("Missing dependency 'requests'. Install it with: pip install requests")
-    sys.exit(1)
-
-try:
-    from ruamel.yaml import YAML  # noqa: F401
-except ImportError:
-    print("Missing dependency 'ruamel.yaml'. Install it with: pip install ruamel.yaml")
+    print("Missing dependency 'PyYAML'. Install it with: pip install pyyaml")
     sys.exit(1)
 
 from blizzards_installer.ui import banner, error, warn

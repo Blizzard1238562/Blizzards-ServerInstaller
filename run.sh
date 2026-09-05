@@ -9,7 +9,7 @@ fi
 
 cd "$(dirname "$0")"
 
-if ! python3 -c "import requests" >/dev/null 2>&1 || ! python3 -c "import ruamel.yaml" >/dev/null 2>&1; then
+if ! python3 -c "import yaml" >/dev/null 2>&1; then
     echo "Installing dependencies..."
     python3 -m pip install -r requirements.txt --break-system-packages 2>/dev/null \
         || python3 -m pip install -r requirements.txt

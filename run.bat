@@ -9,7 +9,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python -c "import requests, ruamel.yaml" >nul 2>nul
+python -c "import yaml" >nul 2>nul
 if errorlevel 1 (
     echo Installing dependencies...
     python -m pip install -r requirements.txt

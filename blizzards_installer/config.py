@@ -24,7 +24,7 @@ import threading
 import time
 from pathlib import Path
 
-from ruamel.yaml import YAML
+import yaml
 
 from .ui import error, info, ok, warn
 
@@ -250,16 +250,19 @@ def find_paper_config_paths(server_dir: Path):
 
 
 def patch_yaml(path: Path, patch_fn) -> None:
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    yaml.indent(mapping=2, sequence=4, offset=2)
+    """Load a YAML file, run patch_fn on its data, and write it back.
+
+    Uses PyYAML's safe loader/dumper: comments in Paper's generated files are
+    not preserved (cosmetic only - Paper regenerates/ignores them), but the
+    key order and every value the server actually reads are kept intact.
+    """
     with open(path, "r", encoding="utf-8") as f:
-        data = yaml.load(f)
+        data = yaml.safe_load(f)
     if data is None:
         return
     patch_fn(data)
     with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f)
+        yaml.safe_dump(data, f, sort_keys=False, default_flow_style=False, allow_unicode=True)
 
 
 def _nested(data: dict, *keys: str) -> dict:

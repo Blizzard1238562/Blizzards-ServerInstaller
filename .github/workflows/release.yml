@@ -2,7 +2,7 @@ name: Release
 
 # Pushing a version tag (e.g. v1.2.0 or v1.2.0-alpha.1) builds the installer
 # natively on Windows, Linux and macOS (PyInstaller cannot cross-compile) and
-# publishes a GitHub Release with all three binaries attached. Tags
+# publishes a GitHub Release with all four binaries attached. Tags
 # containing -alpha/-beta/-rc are published as prereleases.
 on:
   push:
@@ -23,12 +23,21 @@ jobs:
           - os: windows-latest
             separator: ";"
             asset_name: Blizzards-Server-Installer-windows-x64.exe
+            strip: ""
           - os: ubuntu-latest
             separator: ":"
             asset_name: Blizzards-Server-Installer-linux-x64
+            strip: --strip
+          # macos-latest is Apple Silicon (arm64); macos-15-intel is GitHub's
+          # Intel (x86_64) macOS runner, so an x64 build needs its own job.
           - os: macos-latest
             separator: ":"
             asset_name: Blizzards-Server-Installer-macos-arm64
+            strip: --strip
+          - os: macos-15-intel
+            separator: ":"
+            asset_name: Blizzards-Server-Installer-macos-x64
+            strip: --strip
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,8 +45,12 @@ jobs:
           python-version: "3.12"
       - name: Install build dependencies
         run: python -m pip install -r requirements.txt
+      # Excluded modules are never used by this console-only app (no
+      # GUI/tests/async) - they only bloat the bundle. The only third-party
+      # runtime dependency is PyYAML, which is small and stays.
+      # --strip shrinks the ELF/Mach-O binaries (no-op on Windows).
       - name: Build with PyInstaller
-        run: python -m PyInstaller --noconfirm --onefile --name "${{ matrix.asset_name }}" --add-data "plugins.json${{ matrix.separator }}." --console installer.py
+        run: python -m PyInstaller --noconfirm --onefile --name "${{ matrix.asset_name }}" --add-data "plugins.json${{ matrix.separator }}." --console installer.py --exclude-module setuptools --exclude-module pkg_resources --exclude-module pip --exclude-module numpy --exclude-module unittest --exclude-module pydoc --exclude-module pydoc_data --exclude-module doctest --exclude-module lib2to3 --exclude-module http.server --exclude-module socketserver --exclude-module asyncio --exclude-module multiprocessing --exclude-module curses --exclude-module xmlrpc --exclude-module tkinter --exclude-module ensurepip --exclude-module idlelib --exclude-module cryptography --exclude-module OpenSSL --exclude-module cffi --exclude-module zstandard --exclude-module decimal --exclude-module _decimal --exclude-module socks --exclude-module zoneinfo --exclude-module _zoneinfo --exclude-module unicodedata ${{ matrix.strip }}
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:

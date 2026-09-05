@@ -40,10 +40,9 @@
       "name": "TAB",
       "modrinth_slug": "tab-was-taken",
       "category": "gameplay",
-      "question": "Install TAB and configure it (tablist, nametags, scoreboard)?",
+      "question": "Install TAB and set a minimal tablist showing your server name (small caps)?",
       "default": false,
-      "requires": [],
-      "placeholder_config": true
+      "requires": []
     },
     {
       "id": "placeholderapi",

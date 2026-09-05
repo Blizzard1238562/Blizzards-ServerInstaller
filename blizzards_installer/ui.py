@@ -1,5 +1,6 @@
-"""Small console UI helpers (kept ASCII-only so old Windows cmd.exe renders
-them fine without extra dependencies like colorama)."""
+"""Small console UI helpers. Prompts and status lines stay ASCII so old
+Windows cmd.exe renders them fine without colorama; only the startup
+banner uses Unicode block art."""
 
 from __future__ import annotations
 
@@ -7,12 +8,34 @@ from typing import Optional
 
 from .meta import VERSION
 
+BANNER_ART = """██████╗ ██╗     ██╗███████╗███████╗ █████╗ ██████╗ ██████╗ ███████╗
+██╔══██╗██║     ██║╚══███╔╝╚══███╔╝██╔══██╗██╔══██╗██╔══██╗██╔════╝
+██████╔╝██║     ██║  ███╔╝   ███╔╝ ███████║██████╔╝██║  ██║███████╗
+██╔══██╗██║     ██║ ███╔╝   ███╔╝  ██╔══██║██╔══██╗██║  ██║╚════██║
+██████╔╝███████╗██║███████╗███████╗██║  ██║██║  ██║██████╔╝███████║
+╚═════╝ ╚══════╝╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝
+
+███████╗███████╗██████╗ ██╗   ██╗███████╗██████╗     ██╗███╗   ██╗███████╗████████╗ █████╗ ██╗     ██╗     ███████╗██████╗
+██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝██╔══██╗    ██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗██║     ██║     ██╔════╝██╔══██╗
+███████╗█████╗  ██████╔╝██║   ██║█████╗  ██████╔╝    ██║██╔██╗ ██║███████╗   ██║   ███████║██║     ██║     █████╗  ██████╔╝
+╚════██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝  ██╔══██╗    ██║██║╚██╗██║╚════██║   ██║   ██╔══██║██║     ██║     ██╔══╝  ██╔══██╗
+███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║    ██║██║ ╚████║███████║   ██║   ██║  ██║███████╗███████╗███████╗██║  ██║
+╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝    ╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝
+"""
+
 
 def banner() -> None:
-    print("=" * 64)
-    print("  Blizzards Server Installer".center(64))
-    print(f"  v{VERSION}".center(64))
-    print("=" * 64)
+    try:
+        print(BANNER_ART)
+        print(f"  v{VERSION} - interactive Minecraft server installer".center(67))
+    except UnicodeEncodeError:
+        # Block-art glyphs need a Unicode-capable output (real terminals have
+        # one). When stdout is redirected to a legacy codepage (e.g. cp1252),
+        # degrade to the plain ASCII header instead of crashing.
+        print("=" * 64)
+        print("  Blizzards Server Installer".center(64))
+        print(f"  v{VERSION}".center(64))
+        print("=" * 64)
     print()
 
 
