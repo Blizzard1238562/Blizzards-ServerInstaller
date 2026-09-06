@@ -343,10 +343,10 @@ class TestPluginRegistry(unittest.TestCase):
         plugins, _ = load_plugin_registry()
         flags = {p["id"]: p.get("folia") for p in plugins}
         # authors with Folia builds
-        for pid in ("tab", "viaversion", "luckperms", "simpletpa", "spark"):
+        for pid in ("tab", "viaversion", "luckperms", "simpletpa"):
             self.assertIs(flags[pid], True, f"{pid} should be Folia-compatible")
         # no Folia builds published
-        for pid in ("vault", "multiverse-core", "geyser", "dynmap"):
+        for pid in ("multiverse-core", "geyser", "dynmap"):
             self.assertIs(flags[pid], False, f"{pid} should not be offered on Folia")
 
     def test_plugins_for_server_filters_on_folia(self):
@@ -1120,7 +1120,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertTrue((plugins_dir / "viaversion.jar").exists())
         self.assertTrue((plugins_dir / "simpletpaplugin.jar").exists())
         self.assertFalse((plugins_dir / "luckperms.jar").exists())
-        self.assertFalse((plugins_dir / "vault.jar").exists())
+        self.assertFalse((plugins_dir / "coreprotect.jar").exists())
 
         # TAB tablist uses the entered server name; SimpleTPA gets its preset.
         tab_text = (plugins_dir / "TAB" / "config.yml").read_text(encoding="utf-8")
@@ -1139,16 +1139,16 @@ class TestWizardEndToEnd(unittest.TestCase):
         # difficulty, online/whitelist/pvp/hardcore/flight, view/sim distance,
         # world seed, gamemode, spawn protection, nether, allow-end, command
         # blocks, TNT dupe, block break, headless pistons, anti-xray(+mode),
-        # 16 plugin prompts, RAM, proceed, playit. Defaults ("\n") answer the
+        # 14 plugin prompts, RAM, proceed, playit. Defaults ("\n") answer the
         # rest.
-        answers = ["\n"] * 46
+        answers = ["\n"] * 44
         answers[0] = "2\n"  # mode -> Full setup (index 1)
         answers[3] = str(server_dir) + "\n"  # install directory
         answers[5] = "2\n"  # server name color -> index 1 = Gray (&7)
         answers[20] = "n\n"  # Allow the End? -> patched to false below
         answers[22] = "y\n"  # allow TNT duplication -> patched to true below
-        answers[29] = "y\n"  # install TAB (3rd plugin prompt)
-        answers[43] = "2048\n"  # RAM for the start scripts
+        answers[28] = "y\n"  # install TAB (2nd plugin prompt)
+        answers[41] = "2048\n"  # RAM for the start scripts
 
         def fake_bootstrap(dir_path, jar_path):
             TestApplyGameplayConfig._write_fixture_configs(dir_path)
@@ -1184,7 +1184,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertIn('- "&7ᴍɪɴᴇᴄʀᴀꜰᴛ ꜱᴇʀᴠᴇʀ"', tab_text)
         self.assertIn('"&7Online: %online%"', tab_text)
         self.assertTrue((server_dir / "plugins" / "luckperms.jar").exists())
-        self.assertTrue((server_dir / "plugins" / "spark.jar").exists())
+        self.assertTrue((server_dir / "plugins" / "coreprotect.jar").exists())
 
         # Gameplay config patched (bootstrap succeeded -> no manual notes).
         global_text = (server_dir / "config" / "paper-global.yml").read_text(encoding="utf-8")
@@ -1220,8 +1220,8 @@ class TestWizardEndToEnd(unittest.TestCase):
 
     def test_full_wizard_whitelist_online_mode_resolves_via_mojang(self):
         # prompt order: mode=0, dir=3, online-mode=9, whitelist=10, names=11;
-        # enabling the whitelist adds the name prompt, so 47 inputs total.
-        answers = ["\n"] * 47
+        # enabling the whitelist adds the name prompt, so 45 inputs total.
+        answers = ["\n"] * 45
         answers[0] = "2\n"
         answers[10] = "y\n"  # enable whitelist
         answers[11] = "  Steve , alex \n"  # messy spacing must not break parsing
@@ -1234,7 +1234,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(whitelist[1]["name"], "alex")
 
     def test_full_wizard_whitelist_offline_mode_uses_offline_uuids(self):
-        answers = ["\n"] * 47
+        answers = ["\n"] * 45
         answers[0] = "2\n"
         answers[9] = "n\n"  # online mode off
         answers[10] = "y\n"  # enable whitelist
@@ -1247,7 +1247,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(whitelist, [{"uuid": "5627dd98-e6be-3c21-b8a8-e92344183641", "name": "Steve"}])
 
     def test_full_wizard_whitelist_skips_unresolvable_names(self):
-        answers = ["\n"] * 47
+        answers = ["\n"] * 45
         answers[0] = "2\n"
         answers[10] = "y\n"
         answers[11] = "Steve, ghost\n"  # 'ghost' -> Mojang 204
@@ -1256,7 +1256,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual([e["name"] for e in whitelist], ["Steve"])
 
     def test_full_wizard_whitelist_without_names_writes_nothing(self):
-        answers = ["\n"] * 47
+        answers = ["\n"] * 45
         answers[0] = "2\n"
         answers[10] = "y\n"
         answers[11] = "\n"  # no names entered

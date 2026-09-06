@@ -19,16 +19,6 @@
       "folia": true
     },
     {
-      "id": "vault",
-      "name": "Vault",
-      "modrinth_slug": "vault",
-      "category": "core",
-      "question": "Install Vault (economy/permissions API bridge, needed by many other plugins)?",
-      "default": true,
-      "requires": [],
-      "folia": false
-    },
-    {
       "id": "tab",
       "name": "TAB",
       "modrinth_slug": "tab-was-taken",
@@ -133,16 +123,6 @@
         "geyser"
       ],
       "folia": false
-    },
-    {
-      "id": "spark",
-      "name": "spark",
-      "modrinth_slug": "spark",
-      "category": "ops",
-      "question": "Install spark (performance profiler for diagnosing lag)?",
-      "default": true,
-      "requires": [],
-      "folia": true
     },
     {
       "id": "dynmap",
