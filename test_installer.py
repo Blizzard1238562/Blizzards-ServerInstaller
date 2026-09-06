@@ -60,7 +60,7 @@ from blizzards_installer.serverjar import (
     download_server_jar,
 )
 from blizzards_installer.versions import choose_minecraft_version
-from blizzards_installer.wizard import run_quick_unattended, run_wizard
+from blizzards_installer.wizard import _ask_whitelist_names, run_quick_unattended, run_wizard
 
 
 class TestFindJarUrl(unittest.TestCase):
@@ -248,6 +248,54 @@ class TestYamlPatching(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         self.assertIn("unsupported-settings", text)
         self.assertIn("allow-piston-duplication: true", text)
+
+
+class TestWhitelistNames(unittest.TestCase):
+    """Direct tests of the whitelist name -> entry resolution helper."""
+
+    @staticmethod
+    def _ask(raw: str, online: bool, payload=None, raise_error=None):
+        def fake(url):
+            if raise_error:
+                raise raise_error
+            return payload
+
+        with patch("blizzards_installer.wizard.ask_text", return_value=raw), \
+                patch("blizzards_installer.wizard.net.http_get_json", side_effect=fake):
+            return _ask_whitelist_names(online)
+
+    def test_online_mode_resolves_canonical_names(self):
+        payload = {"id": "069a79f4-44e9-4726-a5be-fca90e38aaf5", "name": "Notch"}
+        entries = self._ask("Notch", True, payload=payload)
+        self.assertEqual(entries, [{"uuid": "069a79f4-44e9-4726-a5be-fca90e38aaf5", "name": "Notch"}])
+
+    def test_offline_mode_uses_offline_uuids_without_network(self):
+        entries = self._ask("Steve, alex", False, payload=None)
+        self.assertEqual([e["name"] for e in entries], ["Steve", "alex"])
+        self.assertEqual(entries[0]["uuid"], offline_player_uuid("Steve"))
+        # payload is ignored offline; a network call would have raised via fake
+
+    def test_invalid_usernames_skipped_without_network_call(self):
+        for bad in ("St eve", "verylongusername_way_over_16_chars_here"):
+            entries = self._ask(bad, True, payload={"id": "x"})
+            self.assertEqual(entries, [])
+
+    def test_malformed_api_response_skipped_not_crashed(self):
+        with patch("blizzards_installer.wizard.warn") as mock_warn:
+            entries = self._ask("Notch", True, payload={"id": "not-a-uuid", "name": "Notch"})
+        self.assertEqual(entries, [])  # must not raise on a bogus id
+        joined = " ".join(a.args[0] for a in mock_warn.call_args_list)
+        self.assertIn("Could not look up 'Notch'", joined)
+
+    def test_network_failure_skipped_with_console_hint(self):
+        from blizzards_installer import net as net_mod
+        with patch("blizzards_installer.wizard.warn") as mock_warn:
+            entries = self._ask("Steve, Notch", True,
+                                raise_error=net_mod.ConnectionError("offline"))
+        self.assertEqual(entries, [])
+        joined = " ".join(a.args[0] for a in mock_warn.call_args_list)
+        self.assertIn("whitelist add Steve", joined)
+        self.assertIn("whitelist add Notch", joined)
 
 
 class TestWhitelist(unittest.TestCase):

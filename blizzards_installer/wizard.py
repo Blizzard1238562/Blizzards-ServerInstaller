@@ -11,6 +11,7 @@ world and configs the user has since changed.
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -60,6 +61,11 @@ MODE_LABELS = [
     "Full setup - customize everything",
     "Update an existing server",
 ]
+
+# Mojang account names: letters, digits and underscores, 3-16 chars. We only
+# enforce the character set and upper length so clearly-invalid input is
+# rejected before it reaches the profile API or warning text.
+MINECRAFT_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
 
 def run_wizard() -> None:
@@ -306,15 +312,21 @@ def _ask_whitelist_names(online_mode: bool) -> list[dict]:
     names = [n.strip() for n in raw.split(",") if n.strip()]
     entries: list[dict] = []
     for name in names:
+        if not MINECRAFT_NAME_RE.fullmatch(name):
+            warn(f"Skipping '{name}' - not a valid Minecraft username "
+                 "(letters, digits and underscores, up to 16 characters).")
+            continue
         if online_mode:
             try:
                 data = net.http_get_json(f"https://api.mojang.com/users/profiles/minecraft/{name}")
+                if not isinstance(data, dict) or not data.get("id"):
+                    raise ValueError("no profile id in response")
+                profile_uuid = str(uuid.UUID(data["id"]))
+                canonical = data.get("name", name)
             except Exception:
-                data = None
-            if not isinstance(data, dict) or not data.get("id"):
                 warn(f"Could not look up '{name}' on Mojang - add them later with: whitelist add {name}")
                 continue
-            entries.append({"uuid": str(uuid.UUID(data["id"])), "name": data.get("name", name)})
+            entries.append({"uuid": profile_uuid, "name": canonical})
         else:
             entries.append({"uuid": offline_player_uuid(name), "name": name})
     if not entries:
@@ -418,8 +430,11 @@ def run_full_wizard() -> None:
     print(f"  Gamemode        : {gamemode}")
     print(f"  World seed      : {world_seed or '(random)'}")
     print(f"  Allow the End   : {allow_end}")
-    if whitelist_entries:
-        print(f"  Whitelist       : {', '.join(e['name'] for e in whitelist_entries)}")
+    if whitelist:
+        whitelist_label = ", ".join(e["name"] for e in whitelist_entries) or "enabled (no names added yet)"
+    else:
+        whitelist_label = "disabled"
+    print(f"  Whitelist       : {whitelist_label}")
     print(f"  Plugins         : {', '.join(p['name'] for p in chosen_plugins) or '(none)'}")
     print(f"  TNT duplication : {answers['tnt_dupe']}")
     print(f"  Anti-Xray       : {answers['anti_xray']}" + (f" (mode {answers['anti_xray_mode']})" if answers["anti_xray"] else ""))
