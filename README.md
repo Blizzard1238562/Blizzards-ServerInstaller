@@ -183,6 +183,9 @@ Shipped:
 - **Initial operators and whitelist names.** Full setup asks for the players
   to whitelist and/or make operators; their real (or offline-mode) UUIDs are
   resolved automatically so the entries actually match on join.
+- **Config preview before install.** Full setup can show the exact
+  `server.properties` values and config patches that will be written before
+  the download starts.
 - **Unattended CLI flags.** `--quick`, `--dir`, `--name`, `--ram` for
   scripted or headless installs.
 - **Management scripts.** `stop`/`restart`/`backup` next to the start
@@ -205,7 +208,6 @@ Later:
 Ideas:
 
 - Crash auto-restart for the server process.
-- Show a preview of the config changes before the install runs.
 - Optional server icon: copy a `server-icon.png` into the install so the
   server shows a real image in the server list.
 - Have the start scripts print the public playit.gg address once the tunnel

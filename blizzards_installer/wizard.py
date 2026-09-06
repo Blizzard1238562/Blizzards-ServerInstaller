@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 from .config import (
+    UNSUPPORTED_SETTINGS,
     apply_gameplay_config,
     offline_player_uuid,
     write_eula,
@@ -356,6 +357,46 @@ def _ask_operator_names(online_mode: bool) -> list[dict]:
     )
 
 
+def _property_preview(value) -> str:
+    """Render a property value the way it lands in server.properties."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _print_config_preview(
+    props_overrides: dict,
+    whitelist_entries: list[dict],
+    op_entries: list[dict],
+    answers: dict,
+) -> None:
+    """Print the exact config files/values the install is about to write, so
+    the user can double-check before the download starts."""
+    print("  Config that will be written:")
+    print("    eula.txt             : eula=true")
+    print("    server.properties    :")
+    for key in sorted(props_overrides):
+        print(f"      {key}={_property_preview(props_overrides[key])}")
+    if whitelist_entries:
+        names = ", ".join(e["name"] for e in whitelist_entries)
+        print(f"    whitelist.json      : {names}")
+    if op_entries:
+        names = ", ".join(e["name"] for e in op_entries)
+        print(f"    ops.json            : {names}")
+    print("    Paper config files   : patched after a one-time server start")
+    print("      (requires Java on PATH; otherwise written to MANUAL_CONFIG_NOTES.txt)")
+    for answer_key, yaml_key in UNSUPPORTED_SETTINGS:
+        print(f"      paper-global.yml unsupported-settings.{yaml_key}: "
+              f"{_property_preview(answers[answer_key])}")
+    if answers["anti_xray"]:
+        mode = answers["anti_xray_mode"]
+    else:
+        mode = "(disabled)"
+    print(f"      paper-world-defaults.yml anti-xray: enabled="
+          f"{_property_preview(answers['anti_xray'])}, engine-mode={mode}")
+    print(f"      bukkit.yml settings.allow-end: {_property_preview(answers['allow_end'])}")
+
+
 def run_full_wizard() -> None:
     section("Server basics")
     type_keys = list(SERVER_TYPES.keys())
@@ -407,6 +448,23 @@ def run_full_wizard() -> None:
     allow_nether = ask_yes_no("Allow the Nether?", True)
     allow_end = ask_yes_no("Allow the End?", True)
     enable_command_blocks = ask_yes_no("Enable command blocks?", False)
+    props_overrides = {
+        "motd": motd,
+        "max-players": max_players,
+        "difficulty": difficulty,
+        "online-mode": online_mode,
+        "white-list": whitelist,
+        "pvp": pvp,
+        "hardcore": hardcore,
+        "allow-flight": allow_flight,
+        "view-distance": view_distance,
+        "simulation-distance": sim_distance,
+        "level-seed": world_seed,
+        "gamemode": gamemode,
+        "spawn-protection": spawn_protection,
+        "allow-nether": allow_nether,
+        "enable-command-block": enable_command_blocks,
+    }
 
     section("Gameplay & exploit settings (Paper)")
     info("These control vanilla bugs/exploits that Paper patches by default.")
@@ -469,6 +527,8 @@ def run_full_wizard() -> None:
     print(f"  Plugins         : {', '.join(p['name'] for p in chosen_plugins) or '(none)'}")
     print(f"  TNT duplication : {answers['tnt_dupe']}")
     print(f"  Anti-Xray       : {answers['anti_xray']}" + (f" (mode {answers['anti_xray_mode']})" if answers["anti_xray"] else ""))
+    if ask_yes_no("Show the exact config changes that will be written before installing?", False):
+        _print_config_preview(props_overrides, whitelist_entries, op_entries, answers)
     if not ask_yes_no("Proceed with installation?", True):
         info("Aborted.")
         return
@@ -480,26 +540,7 @@ def run_full_wizard() -> None:
 
     section("Writing base config")
     write_eula(server_dir)
-    write_server_properties(
-        server_dir,
-        {
-            "motd": motd,
-            "max-players": max_players,
-            "difficulty": difficulty,
-            "online-mode": online_mode,
-            "white-list": whitelist,
-            "pvp": pvp,
-            "hardcore": hardcore,
-            "allow-flight": allow_flight,
-            "view-distance": view_distance,
-            "simulation-distance": sim_distance,
-            "level-seed": world_seed,
-            "gamemode": gamemode,
-            "spawn-protection": spawn_protection,
-            "allow-nether": allow_nether,
-            "enable-command-block": enable_command_blocks,
-        },
-    )
+    write_server_properties(server_dir, props_overrides)
     ok("Wrote eula.txt and server.properties")
     if whitelist_entries:
         write_whitelist(server_dir, whitelist_entries)

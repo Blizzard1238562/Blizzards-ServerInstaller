@@ -6,6 +6,7 @@ realistic fixture JSON/YAML through the functions to make sure nothing
 throws and the output is what we expect. Run with: python3 test_installer.py
 """
 import base64
+import io
 import json
 import shutil
 import subprocess
@@ -1208,9 +1209,9 @@ class TestWizardEndToEnd(unittest.TestCase):
         # difficulty, online/whitelist/pvp/hardcore/flight, view/sim distance,
         # world seed, gamemode, spawn protection, nether, allow-end, command
         # operators, TNT dupe, block break, headless pistons, anti-xray(+mode),
-        # 14 plugin prompts, RAM, proceed, playit. Defaults ("\n") answer the
-        # rest.
-        answers = ["\n"] * 45
+        # 14 plugin prompts, RAM, config preview, proceed, playit. Defaults
+        # ("\n") answer the rest.
+        answers = ["\n"] * 46
         answers[0] = "2\n"  # mode -> Full setup (index 1)
         answers[3] = str(server_dir) + "\n"  # install directory
         answers[5] = "2\n"  # server name color -> index 1 = Gray (&7)
@@ -1290,8 +1291,8 @@ class TestWizardEndToEnd(unittest.TestCase):
 
     def test_full_wizard_whitelist_online_mode_resolves_via_mojang(self):
         # prompt order: mode=0, dir=3, online-mode=9, whitelist=10, names=11;
-        # enabling the whitelist adds the name prompt, so 46 inputs total.
-        answers = ["\n"] * 46
+        # enabling the whitelist adds the name prompt, so 47 inputs total.
+        answers = ["\n"] * 47
         answers[0] = "2\n"
         answers[10] = "y\n"  # enable whitelist
         answers[11] = "  Steve , alex \n"  # messy spacing must not break parsing
@@ -1304,7 +1305,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(whitelist[1]["name"], "alex")
 
     def test_full_wizard_whitelist_offline_mode_uses_offline_uuids(self):
-        answers = ["\n"] * 46
+        answers = ["\n"] * 47
         answers[0] = "2\n"
         answers[9] = "n\n"  # online mode off
         answers[10] = "y\n"  # enable whitelist
@@ -1317,7 +1318,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(whitelist, [{"uuid": "5627dd98-e6be-3c21-b8a8-e92344183641", "name": "Steve"}])
 
     def test_full_wizard_whitelist_skips_unresolvable_names(self):
-        answers = ["\n"] * 46
+        answers = ["\n"] * 47
         answers[0] = "2\n"
         answers[10] = "y\n"
         answers[11] = "Steve, ghost\n"  # 'ghost' -> Mojang 204
@@ -1326,7 +1327,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual([e["name"] for e in whitelist], ["Steve"])
 
     def test_full_wizard_whitelist_without_names_writes_nothing(self):
-        answers = ["\n"] * 46
+        answers = ["\n"] * 47
         answers[0] = "2\n"
         answers[10] = "y\n"
         answers[11] = "\n"  # no names entered
@@ -1336,7 +1337,7 @@ class TestWizardEndToEnd(unittest.TestCase):
     def test_full_wizard_operators_online_mode(self):
         # prompt order: mode=0, online-mode=9, whitelist=10 (no), operators=11,
         # operator names=12, everything after defaulted.
-        answers = ["\n"] * 46
+        answers = ["\n"] * 47
         answers[0] = "2\n"
         answers[11] = "y\n"  # add operators
         answers[12] = "Steve, Notch\n"
@@ -1350,7 +1351,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertFalse((server_dir / "whitelist.json").exists())
 
     def test_full_wizard_operators_offline_mode_uses_offline_uuids(self):
-        answers = ["\n"] * 46
+        answers = ["\n"] * 47
         answers[0] = "2\n"
         answers[9] = "n\n"  # online mode off
         answers[11] = "y\n"
@@ -1360,10 +1361,51 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(ops[0]["uuid"], offline_player_uuid("Steve"))
 
     def test_full_wizard_operators_default_off_writes_nothing(self):
-        answers = ["\n"] * 45  # operators prompt answered with the default (no)
+        answers = ["\n"] * 46  # operators prompt answered with the default (no)
         answers[0] = "2\n"
         server_dir = self._full_wizard_with(answers)
         self.assertFalse((server_dir / "ops.json").exists())
+
+    def test_full_wizard_config_preview_shows_exact_values(self):
+        # whitelist+operators both enabled, so 48 prompts (2 extra name asks).
+        out = io.StringIO()
+        d = Path(tempfile.mkdtemp()) / "server"
+        answers = ["\n"] * 48
+        answers[0] = "2\n"
+        answers[3] = str(d) + "\n"
+        answers[9] = "n\n"  # offline mode (no Mojang call needed)
+        answers[10] = "y\n"  # whitelist on
+        answers[11] = "Steve\n"
+        answers[12] = "y\n"  # operators on
+        answers[13] = "Notch\n"
+        answers[23] = "n\n"  # Allow the End? -> no
+        answers[25] = "y\n"  # TNT duplication -> yes
+        answers[45] = "y\n"  # show config preview
+
+        def fake_bootstrap(dir_path, jar_path):
+            TestApplyGameplayConfig._write_fixture_configs(dir_path)
+            return True
+
+        calls = iter(answers)
+        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
+                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
+                patch("blizzards_installer.net.download_file", side_effect=self._fake_download), \
+                patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap), \
+                patch("sys.stdout", out):
+            run_wizard()
+        text = out.getvalue()
+        self.assertIn("Config that will be written", text)
+        self.assertIn("eula=true", text)
+        self.assertIn("online-mode=false", text)
+        self.assertIn("white-list=true", text)
+        self.assertIn("allow-piston-duplication: true", text)
+        self.assertIn("settings.allow-end: false", text)
+        self.assertIn("whitelist.json      : Steve", text)
+        self.assertIn("ops.json            : Notch", text)
+        # and the preview matched what actually landed on disk
+        props = (d / "server.properties").read_text(encoding="utf-8")
+        self.assertIn("online-mode=false", props)
+        self.assertIn("white-list=true", props)
 
 
 if __name__ == "__main__":
