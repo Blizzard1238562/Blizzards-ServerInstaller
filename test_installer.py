@@ -558,7 +558,9 @@ class TestApplyGameplayConfig(unittest.TestCase):
         (server_dir / "config" / "paper-world-defaults.yml").write_text(
             "anticheat:\n  anti-xray:\n    enabled: false\n    engine-mode: 1\n", encoding="utf-8"
         )
-        (server_dir / "bukkit.yml").write_text("allow-end: true\n", encoding="utf-8")
+        (server_dir / "bukkit.yml").write_text(
+            "settings:\n  allow-end: true\n  warn-on-overload: true\n", encoding="utf-8"
+        )
 
     def test_successful_bootstrap_patches_configs(self):
         def fake_bootstrap(server_dir, jar_path):
@@ -583,7 +585,9 @@ class TestApplyGameplayConfig(unittest.TestCase):
         self.assertIn("enabled: true", world_text)
         self.assertIn("engine-mode: 2", world_text)
         bukkit_text = (self.tmpdir / "bukkit.yml").read_text(encoding="utf-8")
-        self.assertIn("allow-end: false", bukkit_text)
+        self.assertIn("settings:", bukkit_text)
+        self.assertIn("  allow-end: false", bukkit_text)
+        self.assertNotRegex(bukkit_text, r"(?m)^allow-end:")
         self.assertFalse((self.tmpdir / "MANUAL_CONFIG_NOTES.txt").exists())
 
     def test_failed_bootstrap_writes_manual_notes(self):
@@ -602,6 +606,7 @@ class TestApplyGameplayConfig(unittest.TestCase):
         self.assertIn("allow-permanent-block-break-exploits: true", notes)
         self.assertIn("allow-headless-pistons: false", notes)
         self.assertIn("engine-mode: 1", notes)
+        self.assertIn('bukkit.yml, under "settings"', notes)
         self.assertIn("allow-end: false", notes)
 
 
@@ -1192,7 +1197,8 @@ class TestWizardEndToEnd(unittest.TestCase):
         world_text = (server_dir / "config" / "paper-world-defaults.yml").read_text(encoding="utf-8")
         self.assertIn("enabled: true", world_text)
         bukkit_text = (server_dir / "bukkit.yml").read_text(encoding="utf-8")
-        self.assertIn("allow-end: false", bukkit_text)
+        self.assertIn("  allow-end: false", bukkit_text)
+        self.assertNotRegex(bukkit_text, r"(?m)^allow-end:")
         self.assertFalse((server_dir / "MANUAL_CONFIG_NOTES.txt").exists())
         # The public-access question defaults to no: nothing playit-related
         # may be created unless the user opts in.

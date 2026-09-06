@@ -287,9 +287,10 @@ def set_unsupported_settings(data: dict, answers: dict) -> None:
 
 
 def set_allow_end(data: dict, enabled: bool) -> None:
-    """bukkit.yml's allow-end toggle - the only stock way to disable the End
-    (there is no allow-end key in server.properties)."""
-    data["allow-end"] = enabled
+    """bukkit.yml's allow-end toggle (nested under settings:, exactly where
+    Paper's generated file puts it) - the only stock way to disable the End,
+    since server.properties has no allow-end key."""
+    _nested(data, "settings")["allow-end"] = enabled
 
 
 def set_anti_xray(data: dict, enabled: bool, engine_mode: int) -> None:
@@ -356,7 +357,7 @@ files by hand:
     enabled: {_yn(answers['anti_xray'])}
     engine-mode: {answers['anti_xray_mode']}
 
-{BUKKIT_CONFIG}:
+{BUKKIT_CONFIG}, under "settings":
     allow-end: {_yn(answers.get('allow_end', True))}
 
 (On Paper versions older than 1.19 these settings live in a single root
