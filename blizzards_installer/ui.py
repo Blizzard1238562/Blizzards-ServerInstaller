@@ -60,9 +60,12 @@ def error(msg: str) -> None:
 
 
 def ask_yes_no(question: str, default: bool = True) -> bool:
-    suffix = "[Y/n]" if default else "[y/N]"
+    """Yes/no prompt. The default (what pressing Enter selects) is always
+    shown explicitly and the y/n letters stay lowercase so the suffix never
+    changes shape depending on the default."""
+    default_label = "yes" if default else "no"
     while True:
-        raw = input(f"  ? {question} {suffix} ").strip().lower()
+        raw = input(f"  ? {question} [y/n] (default: {default_label}) ").strip().lower()
         if not raw:
             return default
         if raw in ("y", "yes"):
