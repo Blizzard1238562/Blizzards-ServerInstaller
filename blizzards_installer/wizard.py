@@ -19,6 +19,7 @@ from .config import (
     apply_gameplay_config,
     offline_player_uuid,
     write_eula,
+    write_ops,
     write_server_properties,
     write_whitelist,
 )
@@ -299,16 +300,17 @@ def update_existing_server(server_dir: Path, manifest: dict) -> None:
     info("Your world, configs and start scripts were kept. Restart the server to apply the updates.")
 
 
-def _ask_whitelist_names(online_mode: bool) -> list[dict]:
-    """Ask which players may join and resolve them to whitelist.json entries.
+def _ask_player_names(prompt: str, online_mode: bool, skip_hint: str, none_warning: str) -> list[dict]:
+    """Ask for comma-separated Minecraft usernames and resolve them into
+    {"uuid", "name"} entries (shared by the whitelist and operators steps).
 
-    Returns a list of {"uuid", "name"} dicts. Online-mode servers resolve
-    each name through Mojang's profile API (the entry needs the player's
-    real UUID to ever match); offline-mode servers get the deterministic
-    offline UUID Java assigns on join. Names that can't be resolved are
-    skipped with a hint for the in-game command, since a uuid-less entry
-    would silently never match."""
-    raw = ask_text("Minecraft username(s) to whitelist (comma-separated)", None)
+    Online-mode servers resolve each name through Mojang's profile API (the
+    entry needs the player's real UUID to ever match); offline-mode servers
+    get the deterministic offline UUID Java assigns on join. Invalid names
+    and names that can't be resolved are skipped with a hint for the
+    in-game command (`skip_hint`), since a uuid-less entry would silently
+    never match."""
+    raw = ask_text(prompt, None)
     names = [n.strip() for n in raw.split(",") if n.strip()]
     entries: list[dict] = []
     for name in names:
@@ -324,14 +326,34 @@ def _ask_whitelist_names(online_mode: bool) -> list[dict]:
                 profile_uuid = str(uuid.UUID(data["id"]))
                 canonical = data.get("name", name)
             except Exception:
-                warn(f"Could not look up '{name}' on Mojang - add them later with: whitelist add {name}")
+                warn(f"Could not look up '{name}' on Mojang - add them later with: {skip_hint} {name}")
                 continue
             entries.append({"uuid": profile_uuid, "name": canonical})
         else:
             entries.append({"uuid": offline_player_uuid(name), "name": name})
     if not entries:
-        warn("Nothing could be whitelisted - the server will start with an empty whitelist.")
+        warn(none_warning)
     return entries
+
+
+def _ask_whitelist_names(online_mode: bool) -> list[dict]:
+    """Names to whitelist (only asked when the whitelist is enabled)."""
+    return _ask_player_names(
+        "Minecraft username(s) to whitelist (comma-separated)",
+        online_mode,
+        "whitelist add",
+        "Nothing could be whitelisted - the server will start with an empty whitelist.",
+    )
+
+
+def _ask_operator_names(online_mode: bool) -> list[dict]:
+    """Names to grant operator status (only asked when operators are on)."""
+    return _ask_player_names(
+        "Minecraft username(s) to make server operators (comma-separated)",
+        online_mode,
+        "op",
+        "No operators could be added - use 'op <name>' in the server console later.",
+    )
 
 
 def run_full_wizard() -> None:
@@ -370,6 +392,10 @@ def run_full_wizard() -> None:
     whitelist_entries: list[dict] = []
     if whitelist:
         whitelist_entries = _ask_whitelist_names(online_mode)
+    operators = ask_yes_no("Add server operators (admins who can use commands)?", False)
+    op_entries: list[dict] = []
+    if operators:
+        op_entries = _ask_operator_names(online_mode)
     pvp = ask_yes_no("Enable PvP?", True)
     hardcore = ask_yes_no("Hardcore mode?", False)
     allow_flight = ask_yes_no("Allow flight (some minigame/creative plugins need this)?", False)
@@ -435,6 +461,11 @@ def run_full_wizard() -> None:
     else:
         whitelist_label = "disabled"
     print(f"  Whitelist       : {whitelist_label}")
+    if operators:
+        ops_label = ", ".join(e["name"] for e in op_entries) or "enabled (no names added yet)"
+    else:
+        ops_label = "none"
+    print(f"  Operators       : {ops_label}")
     print(f"  Plugins         : {', '.join(p['name'] for p in chosen_plugins) or '(none)'}")
     print(f"  TNT duplication : {answers['tnt_dupe']}")
     print(f"  Anti-Xray       : {answers['anti_xray']}" + (f" (mode {answers['anti_xray_mode']})" if answers["anti_xray"] else ""))
@@ -473,6 +504,9 @@ def run_full_wizard() -> None:
     if whitelist_entries:
         write_whitelist(server_dir, whitelist_entries)
         ok(f"Wrote whitelist.json for {', '.join(e['name'] for e in whitelist_entries)}")
+    if op_entries:
+        write_ops(server_dir, op_entries)
+        ok(f"Wrote ops.json for {', '.join(e['name'] for e in op_entries)}")
 
     plugins_dir = server_dir / "plugins"
     plugins_dir.mkdir(exist_ok=True)

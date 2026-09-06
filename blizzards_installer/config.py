@@ -389,3 +389,17 @@ def write_whitelist(server_dir: Path, entries: list[dict]) -> None:
     online mode, offline_player_uuid() otherwise)."""
     path = server_dir / "whitelist.json"
     path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+
+
+def write_ops(server_dir: Path, entries: list[dict]) -> None:
+    """Write ops.json (vanilla operators file).
+
+    Each entry gets level 4 (full permissions) and no player-limit bypass -
+    the same shape vanilla's `op <name>` command writes for a fresh operator.
+    Entries must carry a resolved uuid like write_whitelist()."""
+    rows = [
+        {"uuid": e["uuid"], "name": e["name"], "level": 4, "bypassesPlayerLimit": False}
+        for e in entries
+    ]
+    path = server_dir / "ops.json"
+    path.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")

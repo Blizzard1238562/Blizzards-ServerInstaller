@@ -27,6 +27,7 @@ from blizzards_installer.config import (
     set_anti_xray,
     set_unsupported_settings,
     write_eula,
+    write_ops,
     write_server_properties,
     write_whitelist,
 )
@@ -317,6 +318,21 @@ class TestWhitelist(unittest.TestCase):
             path = tmpdir / "whitelist.json"
             self.assertTrue(path.exists())
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), entries)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_write_ops_adds_level_and_no_limit_bypass(self):
+        tmpdir = Path(tempfile.mkdtemp())
+        try:
+            entries = [{"uuid": "069a79f4-44e9-4726-a5be-fca90e38aaf5", "name": "Notch"}]
+            write_ops(tmpdir, entries)
+            rows = json.loads((tmpdir / "ops.json").read_text(encoding="utf-8"))
+            self.assertEqual(rows, [{
+                "uuid": "069a79f4-44e9-4726-a5be-fca90e38aaf5",
+                "name": "Notch",
+                "level": 4,
+                "bypassesPlayerLimit": False,
+            }])
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -1191,17 +1207,17 @@ class TestWizardEndToEnd(unittest.TestCase):
         # software, version, dir, server name, name color, motd, max players,
         # difficulty, online/whitelist/pvp/hardcore/flight, view/sim distance,
         # world seed, gamemode, spawn protection, nether, allow-end, command
-        # blocks, TNT dupe, block break, headless pistons, anti-xray(+mode),
+        # operators, TNT dupe, block break, headless pistons, anti-xray(+mode),
         # 14 plugin prompts, RAM, proceed, playit. Defaults ("\n") answer the
         # rest.
-        answers = ["\n"] * 44
+        answers = ["\n"] * 45
         answers[0] = "2\n"  # mode -> Full setup (index 1)
         answers[3] = str(server_dir) + "\n"  # install directory
         answers[5] = "2\n"  # server name color -> index 1 = Gray (&7)
-        answers[20] = "n\n"  # Allow the End? -> patched to false below
-        answers[22] = "y\n"  # allow TNT duplication -> patched to true below
-        answers[28] = "y\n"  # install TAB (2nd plugin prompt)
-        answers[41] = "2048\n"  # RAM for the start scripts
+        answers[21] = "n\n"  # Allow the End? -> patched to false below
+        answers[23] = "y\n"  # allow TNT duplication -> patched to true below
+        answers[29] = "y\n"  # install TAB (2nd plugin prompt)
+        answers[42] = "2048\n"  # RAM for the start scripts
 
         def fake_bootstrap(dir_path, jar_path):
             TestApplyGameplayConfig._write_fixture_configs(dir_path)
@@ -1274,8 +1290,8 @@ class TestWizardEndToEnd(unittest.TestCase):
 
     def test_full_wizard_whitelist_online_mode_resolves_via_mojang(self):
         # prompt order: mode=0, dir=3, online-mode=9, whitelist=10, names=11;
-        # enabling the whitelist adds the name prompt, so 45 inputs total.
-        answers = ["\n"] * 45
+        # enabling the whitelist adds the name prompt, so 46 inputs total.
+        answers = ["\n"] * 46
         answers[0] = "2\n"
         answers[10] = "y\n"  # enable whitelist
         answers[11] = "  Steve , alex \n"  # messy spacing must not break parsing
@@ -1288,7 +1304,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(whitelist[1]["name"], "alex")
 
     def test_full_wizard_whitelist_offline_mode_uses_offline_uuids(self):
-        answers = ["\n"] * 45
+        answers = ["\n"] * 46
         answers[0] = "2\n"
         answers[9] = "n\n"  # online mode off
         answers[10] = "y\n"  # enable whitelist
@@ -1301,7 +1317,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(whitelist, [{"uuid": "5627dd98-e6be-3c21-b8a8-e92344183641", "name": "Steve"}])
 
     def test_full_wizard_whitelist_skips_unresolvable_names(self):
-        answers = ["\n"] * 45
+        answers = ["\n"] * 46
         answers[0] = "2\n"
         answers[10] = "y\n"
         answers[11] = "Steve, ghost\n"  # 'ghost' -> Mojang 204
@@ -1310,12 +1326,44 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual([e["name"] for e in whitelist], ["Steve"])
 
     def test_full_wizard_whitelist_without_names_writes_nothing(self):
-        answers = ["\n"] * 45
+        answers = ["\n"] * 46
         answers[0] = "2\n"
         answers[10] = "y\n"
         answers[11] = "\n"  # no names entered
         server_dir = self._full_wizard_with(answers)
         self.assertFalse((server_dir / "whitelist.json").exists())
+
+    def test_full_wizard_operators_online_mode(self):
+        # prompt order: mode=0, online-mode=9, whitelist=10 (no), operators=11,
+        # operator names=12, everything after defaulted.
+        answers = ["\n"] * 46
+        answers[0] = "2\n"
+        answers[11] = "y\n"  # add operators
+        answers[12] = "Steve, Notch\n"
+        server_dir = self._full_wizard_with(answers)
+        ops = json.loads((server_dir / "ops.json").read_text(encoding="utf-8"))
+        self.assertEqual([o["name"] for o in ops], ["Steve", "Notch"])
+        self.assertEqual(ops[0]["uuid"], "069a79f4-44e9-4726-a5be-fca90e38aaf5")
+        self.assertEqual(ops[0]["level"], 4)
+        self.assertFalse(ops[0]["bypassesPlayerLimit"])
+        # whitelist stayed off: no whitelist.json
+        self.assertFalse((server_dir / "whitelist.json").exists())
+
+    def test_full_wizard_operators_offline_mode_uses_offline_uuids(self):
+        answers = ["\n"] * 46
+        answers[0] = "2\n"
+        answers[9] = "n\n"  # online mode off
+        answers[11] = "y\n"
+        answers[12] = "Steve\n"
+        server_dir = self._full_wizard_with(answers)
+        ops = json.loads((server_dir / "ops.json").read_text(encoding="utf-8"))
+        self.assertEqual(ops[0]["uuid"], offline_player_uuid("Steve"))
+
+    def test_full_wizard_operators_default_off_writes_nothing(self):
+        answers = ["\n"] * 45  # operators prompt answered with the default (no)
+        answers[0] = "2\n"
+        server_dir = self._full_wizard_with(answers)
+        self.assertFalse((server_dir / "ops.json").exists())
 
 
 if __name__ == "__main__":
