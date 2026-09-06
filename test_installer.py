@@ -279,11 +279,11 @@ class TestServerProperties(unittest.TestCase):
 class TestDependencyResolution(unittest.TestCase):
     def test_pulls_in_required_plugin(self):
         plugins_by_id = {
-            "essentialsx": {"name": "EssentialsX", "requires": ["vault"]},
-            "vault": {"name": "Vault", "requires": []},
+            "worldguard": {"name": "WorldGuard", "requires": ["worldedit"]},
+            "worldedit": {"name": "WorldEdit", "requires": []},
         }
-        resolved = resolve_dependencies({"essentialsx"}, plugins_by_id)
-        self.assertEqual(resolved, {"essentialsx", "vault"})
+        resolved = resolve_dependencies({"worldguard"}, plugins_by_id)
+        self.assertEqual(resolved, {"worldguard", "worldedit"})
 
     def test_transitive_dependency(self):
         plugins_by_id = {
@@ -321,7 +321,7 @@ class TestPluginRegistry(unittest.TestCase):
         for pid in ("tab", "viaversion", "luckperms", "simpletpa", "spark"):
             self.assertIs(flags[pid], True, f"{pid} should be Folia-compatible")
         # no Folia builds published
-        for pid in ("vault", "essentialsx", "multiverse-core", "geyser", "dynmap"):
+        for pid in ("vault", "multiverse-core", "geyser", "dynmap"):
             self.assertIs(flags[pid], False, f"{pid} should not be offered on Folia")
 
     def test_plugins_for_server_filters_on_folia(self):
@@ -1084,7 +1084,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertTrue((plugins_dir / "viaversion.jar").exists())
         self.assertTrue((plugins_dir / "simpletpaplugin.jar").exists())
         self.assertFalse((plugins_dir / "luckperms.jar").exists())
-        self.assertFalse((plugins_dir / "essentialsx.jar").exists())
+        self.assertFalse((plugins_dir / "vault.jar").exists())
 
         # TAB tablist uses the entered server name; SimpleTPA gets its preset.
         tab_text = (plugins_dir / "TAB" / "config.yml").read_text(encoding="utf-8")
@@ -1102,15 +1102,15 @@ class TestWizardEndToEnd(unittest.TestCase):
         # software, version, dir, server name, name color, motd, max players,
         # difficulty, online/whitelist/pvp/hardcore/flight, view/sim distance,
         # world seed, gamemode, spawn protection, nether, command blocks,
-        # TNT dupe, block break, headless pistons, anti-xray(+mode), 17 plugin
+        # TNT dupe, block break, headless pistons, anti-xray(+mode), 16 plugin
         # prompts, RAM, proceed, playit. Defaults ("\n") answer the rest.
-        answers = ["\n"] * 46
+        answers = ["\n"] * 45
         answers[0] = "2\n"  # mode -> Full setup (index 1)
         answers[3] = str(server_dir) + "\n"  # install directory
         answers[5] = "2\n"  # server name color -> index 1 = Gray (&7)
         answers[21] = "y\n"  # allow TNT duplication -> patched to true below
-        answers[29] = "y\n"  # install TAB (4th plugin prompt)
-        answers[43] = "2048\n"  # RAM for the start scripts
+        answers[28] = "y\n"  # install TAB (3rd plugin prompt)
+        answers[42] = "2048\n"  # RAM for the start scripts
 
         def fake_bootstrap(dir_path, jar_path):
             TestApplyGameplayConfig._write_fixture_configs(dir_path)

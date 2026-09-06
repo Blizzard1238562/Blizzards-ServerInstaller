@@ -13,8 +13,8 @@ What it does:
 - Downloads the server jar from mcjars.app, with a fallback to PaperMC's own
   API for Paper.
 - Fetches the newest compatible build of each chosen plugin from Modrinth and
-  adds required dependencies automatically (Vault for EssentialsX, WorldEdit
-  for WorldGuard, etc.).
+  adds required dependencies automatically (WorldEdit for WorldGuard, Geyser
+  for Floodgate, etc.).
 - Offers two modes: **Quick start** (latest Paper + a small essentials set -
   TAB, ViaVersion, SimpleTPA - asks only for the server name, folder and RAM)
   and the original **Full setup** wizard that customizes everything (server
@@ -145,8 +145,8 @@ handling there.
 
 **Plugins.** Add an entry to `plugins.json`. Each entry needs a Modrinth slug,
 a question, a default answer, and optionally a list of required plugin ids.
-Existing dependencies: Floodgate requires Geyser, EssentialsX requires Vault,
-WorldGuard requires WorldEdit.
+Existing dependencies: Floodgate requires Geyser, WorldGuard requires
+WorldEdit.
 
 ## Development
 

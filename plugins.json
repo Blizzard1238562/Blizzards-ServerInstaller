@@ -29,18 +29,6 @@
       "folia": false
     },
     {
-      "id": "essentialsx",
-      "name": "EssentialsX",
-      "modrinth_slug": "essentialsx",
-      "category": "core",
-      "question": "Install EssentialsX (homes, warps, kits, tpa, core commands)?",
-      "default": true,
-      "requires": [
-        "vault"
-      ],
-      "folia": false
-    },
-    {
       "id": "tab",
       "name": "TAB",
       "modrinth_slug": "tab-was-taken",
@@ -56,7 +44,7 @@
       "name": "PlaceholderAPI",
       "modrinth_slug": "placeholderapi",
       "category": "gameplay",
-      "question": "Install PlaceholderAPI (placeholder support used by TAB, Essentials, etc.)?",
+      "question": "Install PlaceholderAPI (placeholder support used by TAB and many other plugins)?",
       "default": false,
       "requires": [],
       "folia": true
