@@ -22,11 +22,13 @@ from blizzards_installer.config import (
     _kill_process_tree,
     _stop_server,
     apply_gameplay_config,
+    offline_player_uuid,
     patch_yaml,
     set_anti_xray,
     set_unsupported_settings,
     write_eula,
     write_server_properties,
+    write_whitelist,
 )
 from blizzards_installer.plugins import (
     _primary_file,
@@ -246,6 +248,29 @@ class TestYamlPatching(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         self.assertIn("unsupported-settings", text)
         self.assertIn("allow-piston-duplication: true", text)
+
+
+class TestWhitelist(unittest.TestCase):
+    def test_offline_player_uuid_matches_java_vector(self):
+        # Java: UUID.nameUUIDFromBytes("OfflinePlayer:Steve") - a widely
+        # published value; locks the algorithm against accidental changes.
+        self.assertEqual(offline_player_uuid("Steve"), "5627dd98-e6be-3c21-b8a8-e92344183641")
+        # The name is part of the hash: different case -> different UUID.
+        self.assertNotEqual(offline_player_uuid("steve"), offline_player_uuid("Steve"))
+
+    def test_write_whitelist_writes_valid_json(self):
+        tmpdir = Path(tempfile.mkdtemp())
+        try:
+            entries = [
+                {"uuid": "5627dd98-e6be-3c21-b8a8-e92344183641", "name": "Steve"},
+                {"uuid": "069a79f4-44e9-4726-a5be-fca90e38aaf5", "name": "Notch"},
+            ]
+            write_whitelist(tmpdir, entries)
+            path = tmpdir / "whitelist.json"
+            self.assertTrue(path.exists())
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), entries)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class TestServerProperties(unittest.TestCase):
@@ -533,6 +558,7 @@ class TestApplyGameplayConfig(unittest.TestCase):
         (server_dir / "config" / "paper-world-defaults.yml").write_text(
             "anticheat:\n  anti-xray:\n    enabled: false\n    engine-mode: 1\n", encoding="utf-8"
         )
+        (server_dir / "bukkit.yml").write_text("allow-end: true\n", encoding="utf-8")
 
     def test_successful_bootstrap_patches_configs(self):
         def fake_bootstrap(server_dir, jar_path):
@@ -545,6 +571,7 @@ class TestApplyGameplayConfig(unittest.TestCase):
             "headless_pistons": True,
             "anti_xray": True,
             "anti_xray_mode": 2,
+            "allow_end": False,
         }
         with patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap):
             apply_gameplay_config(self.tmpdir, Path("server.jar"), answers)
@@ -555,6 +582,8 @@ class TestApplyGameplayConfig(unittest.TestCase):
         world_text = (self.tmpdir / "config" / "paper-world-defaults.yml").read_text(encoding="utf-8")
         self.assertIn("enabled: true", world_text)
         self.assertIn("engine-mode: 2", world_text)
+        bukkit_text = (self.tmpdir / "bukkit.yml").read_text(encoding="utf-8")
+        self.assertIn("allow-end: false", bukkit_text)
         self.assertFalse((self.tmpdir / "MANUAL_CONFIG_NOTES.txt").exists())
 
     def test_failed_bootstrap_writes_manual_notes(self):
@@ -564,6 +593,7 @@ class TestApplyGameplayConfig(unittest.TestCase):
             "headless_pistons": False,
             "anti_xray": True,
             "anti_xray_mode": 1,
+            "allow_end": False,
         }
         with patch("blizzards_installer.config.bootstrap_configs", return_value=False):
             apply_gameplay_config(self.tmpdir, Path("server.jar"), answers)
@@ -572,6 +602,7 @@ class TestApplyGameplayConfig(unittest.TestCase):
         self.assertIn("allow-permanent-block-break-exploits: true", notes)
         self.assertIn("allow-headless-pistons: false", notes)
         self.assertIn("engine-mode: 1", notes)
+        self.assertIn("allow-end: false", notes)
 
 
 class TestStopServer(unittest.TestCase):
@@ -963,6 +994,11 @@ class TestWizardEndToEnd(unittest.TestCase):
                 "date_published": "2024-06-01T00:00:00Z",
                 "files": [{"primary": True, "url": f"https://cdn.example/{slug}.jar", "filename": f"{slug}.jar"}],
             }]
+        if "api.mojang.com" in url:
+            name = url.rsplit("/", 1)[-1]
+            if name.lower() == "ghost":
+                raise net_mod.HTTPError(url, 204)  # profile not found
+            return {"id": "069a79f4-44e9-4726-a5be-fca90e38aaf5", "name": name}
         raise AssertionError(f"unexpected URL: {url}")
 
     @staticmethod
@@ -1101,16 +1137,18 @@ class TestWizardEndToEnd(unittest.TestCase):
         # One input per wizard prompt, in ask order (see run_full_wizard): mode,
         # software, version, dir, server name, name color, motd, max players,
         # difficulty, online/whitelist/pvp/hardcore/flight, view/sim distance,
-        # world seed, gamemode, spawn protection, nether, command blocks,
-        # TNT dupe, block break, headless pistons, anti-xray(+mode), 16 plugin
-        # prompts, RAM, proceed, playit. Defaults ("\n") answer the rest.
-        answers = ["\n"] * 45
+        # world seed, gamemode, spawn protection, nether, allow-end, command
+        # blocks, TNT dupe, block break, headless pistons, anti-xray(+mode),
+        # 16 plugin prompts, RAM, proceed, playit. Defaults ("\n") answer the
+        # rest.
+        answers = ["\n"] * 46
         answers[0] = "2\n"  # mode -> Full setup (index 1)
         answers[3] = str(server_dir) + "\n"  # install directory
         answers[5] = "2\n"  # server name color -> index 1 = Gray (&7)
-        answers[21] = "y\n"  # allow TNT duplication -> patched to true below
-        answers[28] = "y\n"  # install TAB (3rd plugin prompt)
-        answers[42] = "2048\n"  # RAM for the start scripts
+        answers[20] = "n\n"  # Allow the End? -> patched to false below
+        answers[22] = "y\n"  # allow TNT duplication -> patched to true below
+        answers[29] = "y\n"  # install TAB (3rd plugin prompt)
+        answers[43] = "2048\n"  # RAM for the start scripts
 
         def fake_bootstrap(dir_path, jar_path):
             TestApplyGameplayConfig._write_fixture_configs(dir_path)
@@ -1153,11 +1191,77 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertIn("allow-piston-duplication: true", global_text)
         world_text = (server_dir / "config" / "paper-world-defaults.yml").read_text(encoding="utf-8")
         self.assertIn("enabled: true", world_text)
+        bukkit_text = (server_dir / "bukkit.yml").read_text(encoding="utf-8")
+        self.assertIn("allow-end: false", bukkit_text)
         self.assertFalse((server_dir / "MANUAL_CONFIG_NOTES.txt").exists())
         # The public-access question defaults to no: nothing playit-related
         # may be created unless the user opts in.
         self.assertFalse((server_dir / "playit").exists())
         self.assertFalse((server_dir / "start-public.bat").exists())
+
+    def _full_wizard_with(self, answers):
+        """Run the full wizard with a positional answer list (all other
+        prompts defaulted) and the standard network/bootstrap fakes.
+        The install directory is always forced into a fresh temp folder."""
+        server_dir = Path(tempfile.mkdtemp()) / "server"
+        answers[3] = str(server_dir) + "\n"  # install directory (prompt 3)
+
+        def fake_bootstrap(dir_path, jar_path):
+            TestApplyGameplayConfig._write_fixture_configs(dir_path)
+            return True
+
+        calls = iter(answers)
+        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
+                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
+                patch("blizzards_installer.net.download_file", side_effect=self._fake_download), \
+                patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap):
+            run_wizard()
+        return server_dir
+
+    def test_full_wizard_whitelist_online_mode_resolves_via_mojang(self):
+        # prompt order: mode=0, dir=3, online-mode=9, whitelist=10, names=11;
+        # enabling the whitelist adds the name prompt, so 47 inputs total.
+        answers = ["\n"] * 47
+        answers[0] = "2\n"
+        answers[10] = "y\n"  # enable whitelist
+        answers[11] = "  Steve , alex \n"  # messy spacing must not break parsing
+        server_dir = self._full_wizard_with(answers)
+
+        whitelist = json.loads((server_dir / "whitelist.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(whitelist), 2)
+        self.assertEqual(whitelist[0]["name"], "Steve")
+        self.assertEqual(whitelist[0]["uuid"], "069a79f4-44e9-4726-a5be-fca90e38aaf5")
+        self.assertEqual(whitelist[1]["name"], "alex")
+
+    def test_full_wizard_whitelist_offline_mode_uses_offline_uuids(self):
+        answers = ["\n"] * 47
+        answers[0] = "2\n"
+        answers[9] = "n\n"  # online mode off
+        answers[10] = "y\n"  # enable whitelist
+        answers[11] = "Steve\n"
+        server_dir = self._full_wizard_with(answers)
+
+        # No Mojang API call may happen offline (the fake raises on
+        # unexpected URLs, so a stray call would fail this test).
+        whitelist = json.loads((server_dir / "whitelist.json").read_text(encoding="utf-8"))
+        self.assertEqual(whitelist, [{"uuid": "5627dd98-e6be-3c21-b8a8-e92344183641", "name": "Steve"}])
+
+    def test_full_wizard_whitelist_skips_unresolvable_names(self):
+        answers = ["\n"] * 47
+        answers[0] = "2\n"
+        answers[10] = "y\n"
+        answers[11] = "Steve, ghost\n"  # 'ghost' -> Mojang 204
+        server_dir = self._full_wizard_with(answers)
+        whitelist = json.loads((server_dir / "whitelist.json").read_text(encoding="utf-8"))
+        self.assertEqual([e["name"] for e in whitelist], ["Steve"])
+
+    def test_full_wizard_whitelist_without_names_writes_nothing(self):
+        answers = ["\n"] * 47
+        answers[0] = "2\n"
+        answers[10] = "y\n"
+        answers[11] = "\n"  # no names entered
+        server_dir = self._full_wizard_with(answers)
+        self.assertFalse((server_dir / "whitelist.json").exists())
 
 
 if __name__ == "__main__":

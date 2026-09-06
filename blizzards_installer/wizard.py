@@ -11,9 +11,17 @@ world and configs the user has since changed.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
-from .config import apply_gameplay_config, write_eula, write_server_properties
+from .config import (
+    apply_gameplay_config,
+    offline_player_uuid,
+    write_eula,
+    write_server_properties,
+    write_whitelist,
+)
+from . import net
 from .manifest import MANIFEST_NAME, read_manifest, touch_manifest, write_manifest
 from .plugins import (
     install_plugins,
@@ -285,6 +293,35 @@ def update_existing_server(server_dir: Path, manifest: dict) -> None:
     info("Your world, configs and start scripts were kept. Restart the server to apply the updates.")
 
 
+def _ask_whitelist_names(online_mode: bool) -> list[dict]:
+    """Ask which players may join and resolve them to whitelist.json entries.
+
+    Returns a list of {"uuid", "name"} dicts. Online-mode servers resolve
+    each name through Mojang's profile API (the entry needs the player's
+    real UUID to ever match); offline-mode servers get the deterministic
+    offline UUID Java assigns on join. Names that can't be resolved are
+    skipped with a hint for the in-game command, since a uuid-less entry
+    would silently never match."""
+    raw = ask_text("Minecraft username(s) to whitelist (comma-separated)", None)
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    entries: list[dict] = []
+    for name in names:
+        if online_mode:
+            try:
+                data = net.http_get_json(f"https://api.mojang.com/users/profiles/minecraft/{name}")
+            except Exception:
+                data = None
+            if not isinstance(data, dict) or not data.get("id"):
+                warn(f"Could not look up '{name}' on Mojang - add them later with: whitelist add {name}")
+                continue
+            entries.append({"uuid": str(uuid.UUID(data["id"])), "name": data.get("name", name)})
+        else:
+            entries.append({"uuid": offline_player_uuid(name), "name": name})
+    if not entries:
+        warn("Nothing could be whitelisted - the server will start with an empty whitelist.")
+    return entries
+
+
 def run_full_wizard() -> None:
     section("Server basics")
     type_keys = list(SERVER_TYPES.keys())
@@ -318,6 +355,9 @@ def run_full_wizard() -> None:
     difficulty = DIFFICULTIES[ask_choice("Difficulty", DIFFICULTIES, default_index=1)]
     online_mode = ask_yes_no("Online mode (require paid/premium Minecraft accounts)?", True)
     whitelist = ask_yes_no("Enable whitelist?", False)
+    whitelist_entries: list[dict] = []
+    if whitelist:
+        whitelist_entries = _ask_whitelist_names(online_mode)
     pvp = ask_yes_no("Enable PvP?", True)
     hardcore = ask_yes_no("Hardcore mode?", False)
     allow_flight = ask_yes_no("Allow flight (some minigame/creative plugins need this)?", False)
@@ -327,6 +367,7 @@ def run_full_wizard() -> None:
     gamemode = GAMEMODES[ask_choice("Default gamemode", GAMEMODES, default_index=0)]
     spawn_protection = ask_int("Spawn protection radius (blocks)", 16)
     allow_nether = ask_yes_no("Allow the Nether?", True)
+    allow_end = ask_yes_no("Allow the End?", True)
     enable_command_blocks = ask_yes_no("Enable command blocks?", False)
 
     section("Gameplay & exploit settings (Paper)")
@@ -338,6 +379,7 @@ def run_full_wizard() -> None:
         "headless_pistons": ask_yes_no("Allow headless pistons?", False),
         "anti_xray": ask_yes_no("Enable Paper's built-in Anti-Xray?", True),
         "anti_xray_mode": 1,
+        "allow_end": allow_end,
     }
     if answers["anti_xray"]:
         answers["anti_xray_mode"] = ask_choice(
@@ -375,6 +417,9 @@ def run_full_wizard() -> None:
     print(f"  RAM             : {ram_mb} MB")
     print(f"  Gamemode        : {gamemode}")
     print(f"  World seed      : {world_seed or '(random)'}")
+    print(f"  Allow the End   : {allow_end}")
+    if whitelist_entries:
+        print(f"  Whitelist       : {', '.join(e['name'] for e in whitelist_entries)}")
     print(f"  Plugins         : {', '.join(p['name'] for p in chosen_plugins) or '(none)'}")
     print(f"  TNT duplication : {answers['tnt_dupe']}")
     print(f"  Anti-Xray       : {answers['anti_xray']}" + (f" (mode {answers['anti_xray_mode']})" if answers["anti_xray"] else ""))
@@ -410,6 +455,9 @@ def run_full_wizard() -> None:
         },
     )
     ok("Wrote eula.txt and server.properties")
+    if whitelist_entries:
+        write_whitelist(server_dir, whitelist_entries)
+        ok(f"Wrote whitelist.json for {', '.join(e['name'] for e in whitelist_entries)}")
 
     plugins_dir = server_dir / "plugins"
     plugins_dir.mkdir(exist_ok=True)

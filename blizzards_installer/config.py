@@ -1,4 +1,5 @@
-"""server.properties / eula.txt generation and Paper config patching.
+"""server.properties / eula.txt / whitelist.json generation and Paper config
+patching.
 
 First-boot bootstrap: we briefly launch the server so Paper writes its own
 default config files (config/paper-global.yml, paper-world-defaults.yml,
@@ -8,20 +9,25 @@ authoring a full paper-global.yml from scratch, since its schema shifts
 between Minecraft versions.
 
 The wizard's gameplay answers are a single dict with fixed keys (tnt_dupe,
-block_break_exploits, headless_pistons, anti_xray, anti_xray_mode).
-UNSUPPORTED_SETTINGS is the one place that maps those answers to their YAML
-keys; both the auto-patcher below and write_manual_config_notes() (the no-
-Java fallback) read from it so the two can never drift apart.
+block_break_exploits, headless_pistons, anti_xray, anti_xray_mode,
+allow_end). UNSUPPORTED_SETTINGS is the one place that maps those answers
+to their YAML keys; both the auto-patcher below and
+write_manual_config_notes() (the no-Java fallback) read from it so the two
+can never drift apart. allow-end has no Paper setting - it lives in
+bukkit.yml, which the bootstrap generates alongside the Paper configs.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import signal
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import yaml
@@ -34,6 +40,7 @@ from .ui import error, info, ok, warn
 PAPER_GLOBAL_CONFIG = "config/paper-global.yml"
 PAPER_WORLD_DEFAULTS = "config/paper-world-defaults.yml"
 PAPER_LEGACY_CONFIG = "paper.yml"
+BUKKIT_CONFIG = "bukkit.yml"
 
 # (wizard answer key, paper yaml key) - single source of truth for the three
 # toggles patched under "unsupported-settings".
@@ -279,6 +286,12 @@ def set_unsupported_settings(data: dict, answers: dict) -> None:
         us[yaml_key] = answers[answer_key]
 
 
+def set_allow_end(data: dict, enabled: bool) -> None:
+    """bukkit.yml's allow-end toggle - the only stock way to disable the End
+    (there is no allow-end key in server.properties)."""
+    data["allow-end"] = enabled
+
+
 def set_anti_xray(data: dict, enabled: bool, engine_mode: int) -> None:
     # Modern layout: anticheat.anti-xray.*  Legacy layout: world-settings.default.anti-xray.*
     if "world-settings" in data and "anticheat" not in data:
@@ -313,6 +326,14 @@ def apply_gameplay_config(server_dir: Path, jar_path: Path, answers: dict) -> No
         except Exception as exc:
             error(f"Failed to patch anti-xray settings: {exc}")
 
+    bukkit_path = server_dir / BUKKIT_CONFIG
+    if bukkit_path.exists():
+        try:
+            patch_yaml(bukkit_path, lambda d: set_allow_end(d, answers.get("allow_end", True)))
+            ok(f"Patched {BUKKIT_CONFIG} (allow-end)")
+        except Exception as exc:
+            error(f"Failed to patch allow-end in {BUKKIT_CONFIG}: {exc}")
+
 
 def write_manual_config_notes(server_dir: Path, answers: dict) -> None:
     unsupported_lines = "\n".join(
@@ -335,7 +356,35 @@ files by hand:
     enabled: {_yn(answers['anti_xray'])}
     engine-mode: {answers['anti_xray_mode']}
 
+{BUKKIT_CONFIG}:
+    allow-end: {_yn(answers.get('allow_end', True))}
+
 (On Paper versions older than 1.19 these settings live in a single root
 paper.yml file instead of the config/ folder.)
 """
     (server_dir / "MANUAL_CONFIG_NOTES.txt").write_text(notes, encoding="utf-8")
+
+
+def offline_player_uuid(name: str) -> str:
+    """The UUID Java assigns to a player on offline-mode servers.
+
+    Offline profiles are GameProfile(uuid = nameUUIDFromBytes("OfflinePlayer:"
+    + name)) - a UUID v3 (MD5) with the version/variant bits set. Writing the
+    exact same UUID into whitelist.json makes the entry match the joining
+    player, which vanilla's own `whitelist add` gets wrong on offline servers.
+    """
+    digest = bytearray(hashlib.md5(f"OfflinePlayer:{name}".encode("utf-8")).digest())
+    digest[6] = (digest[6] & 0x0F) | 0x30  # UUID version 3
+    digest[8] = (digest[8] & 0x3F) | 0x80  # RFC 4122 variant
+    return str(uuid.UUID(bytes=bytes(digest)))
+
+
+def write_whitelist(server_dir: Path, entries: list[dict]) -> None:
+    """Write whitelist.json (vanilla whitelist file).
+
+    Entries are {"uuid", "name"} dicts in the same shape the server's own
+    `whitelist add` command produces. A blank/missing uuid would never match
+    a joining player, so callers must resolve real UUIDs first (Mojang API in
+    online mode, offline_player_uuid() otherwise)."""
+    path = server_dir / "whitelist.json"
+    path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
