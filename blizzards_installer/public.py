@@ -173,7 +173,7 @@ def _win_tunnel_poll() -> str:
     Best effort - the address is also visible in the agent window and on the
     playit dashboard. Single quotes only, so it nests inside a .bat line."""
     return (
-        "$n = 30; if ($env:PLAYIT_MAX_WAIT) { $n = [int]$env:PLAYIT_MAX_WAIT }; "
+        "$n = 30; if ($env:PLAYIT_MAX_WAIT) { try { $n = [int]$env:PLAYIT_MAX_WAIT } catch { $n = 30 } }; "
         "$addr = ''; "
         "for ($i = 0; $i -lt $n -and -not $addr; $i++) { "
         "Start-Sleep 1; "
