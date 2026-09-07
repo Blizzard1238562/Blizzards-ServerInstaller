@@ -40,6 +40,10 @@ What it does:
   Aikar's flags and the RAM you chose, plus `stop`, `restart` and `backup`
   helper scripts (stop/restart target only this server's java process;
   backup archives the worlds + plugins into `backups/` with a timestamp).
+- The start scripts restart the server automatically after a crash (5 s
+  pause). A deliberate stop never restarts: the in-game `stop` command exits
+  cleanly, and `stop`/`restart` leave a `.stop-requested` marker the start
+  loop checks before relaunching.
 - Re-running the installer into a server folder it created offers to update
   that server (newest jar and plugin builds) instead of installing a fresh
   copy - worlds, configs and start scripts are kept as they are.
@@ -201,6 +205,9 @@ Shipped:
 - **Optional server icon.** Full setup can copy your own `server-icon.png`
   (any valid PNG; 64x64 recommended) so the server shows a real image in
   the multiplayer server list.
+- **Crash auto-restart.** The start scripts relaunch the server 5 s after a
+  crash; a deliberate stop (in-game `stop` or the stop/restart scripts,
+  which set a `.stop-requested` marker) never restarts.
 
 Next up:
 
@@ -214,7 +221,6 @@ Later:
 
 Ideas:
 
-- Crash auto-restart for the server process.
 - Have the start scripts print the public playit.gg address once the tunnel
   is up (open question in `docs/public-servers.md`).
 

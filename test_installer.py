@@ -486,6 +486,86 @@ class TestStartScripts(unittest.TestCase):
         self.assertIn("folia-1.20.1.jar", stop_bat)
         self.assertNotIn("paper-1.21.4.jar", stop_bat)
 
+    def test_start_scripts_auto_restart_with_stop_marker(self):
+        write_start_scripts(self.tmpdir, "paper-1.21.4.jar", 2048)
+        bat = (self.tmpdir / "start.bat").read_text(encoding="utf-8")
+        sh = (self.tmpdir / "start.sh").read_text(encoding="utf-8")
+        # start scripts loop on crash and check the .stop-requested marker
+        self.assertIn("goto loop", bat)
+        self.assertIn("timeout /t 5 /nobreak >nul", bat)
+        self.assertGreaterEqual(bat.count(".stop-requested"), 2)  # entry clear + loop checks
+        self.assertIn("while true", sh)
+        self.assertIn("sleep 5", sh)
+        self.assertIn("rm -f .stop-requested", sh)
+        # stop/restart scripts set the marker so a deliberate stop never restarts
+        self.assertIn("type nul > .stop-requested", (self.tmpdir / "stop.bat").read_text(encoding="utf-8"))
+        self.assertIn("type nul > .stop-requested", (self.tmpdir / "restart.bat").read_text(encoding="utf-8"))
+        self.assertIn("touch .stop-requested", (self.tmpdir / "stop.sh").read_text(encoding="utf-8"))
+        # clean exit (in-game 'stop') must not be treated as a crash either
+        self.assertIn("if not errorlevel 1", bat)
+        self.assertIn("status=$?", sh)
+
+
+@unittest.skipUnless(shutil.which("bash") and os.name == "posix", "requires bash on POSIX")
+class TestStartScriptLoopPosix(unittest.TestCase):
+    """Real-bash runs of the generated start.sh loop: a crash must restart
+    the server, a clean exit must stop the loop, and a .stop-requested
+    marker written during the grace period must cancel the pending restart."""
+
+    def _setup(self, java_body: str, fast_grace: bool):
+        server_dir = Path(tempfile.mkdtemp(prefix="loop_"))
+        write_start_scripts(server_dir, "paper-1.21.4.jar", 1024)
+        start = server_dir / "start.sh"
+        if fast_grace:
+            start.write_text(start.read_text(encoding="utf-8").replace("sleep 5", "sleep 0"), encoding="utf-8")
+        os.chmod(start, 0o755)
+
+        fake_dir = Path(tempfile.mkdtemp(prefix="fakejava_"))
+        counter = fake_dir / "count"
+        (fake_dir / "java").write_text(
+            "#!/usr/bin/env bash\n"
+            "n=$(cat \"$COUNTER\" 2>/dev/null || echo 0)\n"
+            "n=$((n + 1))\n"
+            "echo $n > \"$COUNTER\"\n"
+            + java_body,
+            encoding="utf-8",
+        )
+        os.chmod(fake_dir / "java", 0o755)
+        env = dict(os.environ, PATH=f"{fake_dir}:{os.environ.get('PATH', '')}", COUNTER=str(counter))
+        return server_dir, start, counter, env
+
+    def test_crash_restarts_then_clean_exit_stops_loop(self):
+        server_dir, start, counter, env = self._setup(
+            'if [ $n -lt 3 ]; then exit 1; fi\nexit 0\n', fast_grace=True)
+        subprocess.run(["bash", str(start)], env=env, timeout=60, check=True)
+        # 3 launches: crash, crash, clean exit - the loop must have stopped.
+        self.assertEqual(int(counter.read_text()), 3)
+
+    def test_stop_marker_during_grace_cancels_restart(self):
+        server_dir, start, counter, env = self._setup("exit 1\n", fast_grace=False)
+        proc = subprocess.Popen(["bash", str(start)], env=env)
+        try:
+            for _ in range(200):  # wait for the first crash
+                if counter.exists():
+                    break
+                time.sleep(0.05)
+            self.assertTrue(counter.exists(), "server never started")
+            # marker written while the loop is in its 5 s grace period
+            (server_dir / ".stop-requested").touch()
+            self.assertEqual(proc.wait(timeout=30), 0)
+            # the marker was consumed: exactly one launch, no restart
+            self.assertEqual(int(counter.read_text()), 1)
+            self.assertFalse((server_dir / ".stop-requested").exists())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+    def test_stale_marker_does_not_block_first_start(self):
+        server_dir, start, counter, env = self._setup("exit 0\n", fast_grace=True)
+        (server_dir / ".stop-requested").touch()  # leftover from a previous session
+        subprocess.run(["bash", str(start)], env=env, timeout=60, check=True)
+        self.assertEqual(int(counter.read_text()), 1)  # the server still started once
+
 
 class TestEula(unittest.TestCase):
     def test_writes_eula_agreement(self):

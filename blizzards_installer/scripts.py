@@ -80,13 +80,73 @@ def _chmod(path: Path, mode: int) -> None:
 
 
 def write_start_scripts(server_dir: Path, jar_name: str, ram_mb: int) -> None:
+    """start.bat/start.sh restart the server automatically after a crash
+    (5 s pause between attempts). A deliberate stop never restarts: the
+    in-game 'stop' command makes java exit 0, and stop/restart scripts
+    leave a .stop-requested marker the loop checks before relaunching."""
     flags = _aikars_flags(ram_mb)
 
     bat = server_dir / "start.bat"
-    bat.write_text("@echo off\r\n" f"java {flags} -jar \"{jar_name}\" --nogui\r\n" "pause\r\n", encoding="utf-8")
+    bat.write_text(_bat(
+        "@echo off",
+        'cd /d "%~dp0"',
+        "REM Starts the server. If it crashes it restarts automatically after",
+        "REM 5 seconds; a deliberate stop never restarts (the in-game 'stop'",
+        "REM command exits cleanly, and stop.bat/restart.bat leave a",
+        "REM .stop-requested marker that this loop checks).",
+        "if exist .stop-requested del .stop-requested",
+        ":loop",
+        "if exist .stop-requested (",
+        "  del .stop-requested",
+        "  echo Server stopped.",
+        "  exit /b 0",
+        ")",
+        f'java {flags} -jar "{jar_name}" --nogui',
+        "if exist .stop-requested (",
+        "  del .stop-requested",
+        "  echo Server stopped.",
+        "  exit /b 0",
+        ")",
+        "if not errorlevel 1 (",
+        "  echo Server stopped cleanly.",
+        "  exit /b 0",
+        ")",
+        "echo Server exited unexpectedly - restarting in 5 seconds (close this window to stop)...",
+        "timeout /t 5 /nobreak >nul",
+        "goto loop",
+    ), encoding="utf-8")
 
     sh = server_dir / "start.sh"
-    sh.write_text("#!/usr/bin/env bash\n" f'java {flags} -jar "{jar_name}" --nogui\n', encoding="utf-8")
+    sh.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Starts the server. If it crashes it restarts automatically after\n"
+        "# 5 seconds; a deliberate stop never restarts (the in-game 'stop'\n"
+        "# command exits cleanly, and stop.sh/restart.sh leave a\n"
+        "# .stop-requested marker that this loop checks).\n"
+        'cd "$(dirname "$0")"\n'
+        "rm -f .stop-requested\n"
+        "while true; do\n"
+        "  if [ -f .stop-requested ]; then\n"
+        "    rm -f .stop-requested\n"
+        '    echo "Server stopped."\n'
+        "    exit 0\n"
+        "  fi\n"
+        f'  java {flags} -jar "{jar_name}" --nogui\n'
+        "  status=$?\n"
+        "  if [ -f .stop-requested ]; then\n"
+        "    rm -f .stop-requested\n"
+        '    echo "Server stopped."\n'
+        "    exit 0\n"
+        "  fi\n"
+        "  if [ $status -eq 0 ]; then\n"
+        '    echo "Server stopped cleanly."\n'
+        "    exit 0\n"
+        "  fi\n"
+        '  echo "Server exited unexpectedly (status $status) - restarting in 5 seconds (Ctrl+C to cancel)..."\n'
+        "  sleep 5\n"
+        "done\n",
+        encoding="utf-8",
+    )
     _chmod(sh, 0o755)
 
     write_management_scripts(server_dir, jar_name)
@@ -104,8 +164,9 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
         "# Stops this server if it is running. Only the java process started\n"
         "# with this server's jar is stopped - other Java programs are left\n"
         "# alone. Sends a normal stop signal (the JVM shuts down and saves),\n"
-        "# escalating to a hard kill after 30 seconds.\n"
-        'cd "$(dirname "$0")"\n' f'pat="{_pcre_escape(jar_name)}"\n'
+        "# escalating to a hard kill after 30 seconds. The .stop-requested\n"
+        "# marker tells a running start.sh loop not to restart the server.\n"
+        'cd "$(dirname "$0")"\n' "touch .stop-requested\n" f'pat="{_pcre_escape(jar_name)}"\n'
         'if ! pgrep -f "$pat" >/dev/null 2>&1; then\n' '  echo "Server is not running."\n' "  exit 0\n" "fi\n"
         'echo "Stopping the server..."\n' 'pkill -f "$pat"\n'
         "i=0\n" "while [ $i -lt 30 ]; do\n"
@@ -151,6 +212,9 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
             "REM with this server's jar is stopped - other Java programs are left",
             'REM alone. For a clean shutdown, type "stop" in the server console',
             "REM instead; this script is for when that console window is gone.",
+            "REM The marker tells a running start.bat loop not to restart the",
+            "REM server after we kill it.",
+            "type nul > .stop-requested",
             f'powershell -NoProfile -Command "{_win_kill(jar_name)}"',
             "pause",
         ),
@@ -162,6 +226,9 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
             "@echo off",
             "REM Restarts this server: stops the running instance (if any), waits",
             "REM two seconds, then starts the server again in this window.",
+            "REM The marker makes the old start.bat loop exit instead of",
+            "REM restarting the server we are about to stop.",
+            "type nul > .stop-requested",
             f'powershell -NoProfile -Command "{_win_kill(jar_name)}"',
             "timeout /t 2 /nobreak >nul",
             'call "%~dp0start.bat"',
