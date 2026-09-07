@@ -6,13 +6,19 @@ realistic fixture JSON/YAML through the functions to make sure nothing
 throws and the output is what we expect. Run with: python3 test_installer.py
 """
 import base64
+import gzip
 import io
 import json
+import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +29,7 @@ from blizzards_installer.config import (
     _kill_process_tree,
     _stop_server,
     apply_gameplay_config,
+    bootstrap_configs,
     offline_player_uuid,
     patch_yaml,
     set_anti_xray,
@@ -1406,6 +1413,398 @@ class TestWizardEndToEnd(unittest.TestCase):
         props = (d / "server.properties").read_text(encoding="utf-8")
         self.assertIn("online-mode=false", props)
         self.assertIn("white-list=true", props)
+
+
+class _LocalHTTPServer:
+    """A tiny threaded HTTP server so the real urllib path (no mocks) can
+    be exercised against localhost: downloads, JSON GETs, gzip, 404s and
+    timeouts."""
+
+    def __init__(self, handler):
+        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self._httpd.server_address[1]}"
+
+    def close(self) -> None:
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+class _BytesHandler(BaseHTTPRequestHandler):
+    """Serves a payload covering every byte value; optionally without a
+    Content-Length header (HTTP/1.0 close-delimited body)."""
+    payload = bytes(range(256)) * 1200  # ~307 KB
+    serve_without_length = False
+
+    def do_GET(self):
+        self.send_response(200)
+        if not self.serve_without_length:
+            self.send_header("Content-Length", str(len(self.payload)))
+        self.end_headers()
+        self.wfile.write(self.payload)
+
+    def log_message(self, *args):
+        pass
+
+
+class _GzipHandler(BaseHTTPRequestHandler):
+    """Serves a gzip-compressed body (the rare server-sends-gzip path)."""
+    plain = b"hello gzip world " * 500
+
+    def do_GET(self):
+        body = gzip.compress(self.plain)
+        self.send_response(200)
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+class _GzipJsonHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = gzip.compress(json.dumps({"gzipped": True}).encode("utf-8"))
+        self.send_response(200)
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+class _JsonHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/missing":
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = json.dumps({"ok": True, "list": [1, 2, 3]}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+class TestRealNetworkPath(unittest.TestCase):
+    """Runs the real HTTP layer against a local server - no mocks."""
+
+    def test_download_file_writes_exact_bytes_and_cleans_part(self):
+        server = _LocalHTTPServer(_BytesHandler)
+        try:
+            dest = Path(tempfile.mkdtemp()) / "file.bin"
+            net_mod.download_file(f"{server.base_url}/file.bin", dest, "file.bin")
+            self.assertEqual(dest.read_bytes(), _BytesHandler.payload)
+            self.assertFalse(Path(str(dest) + ".part").exists())
+        finally:
+            server.close()
+
+    def test_download_file_without_content_length(self):
+        class NoLength(_BytesHandler):
+            serve_without_length = True
+
+        server = _LocalHTTPServer(NoLength)
+        try:
+            dest = Path(tempfile.mkdtemp()) / "file.bin"
+            net_mod.download_file(f"{server.base_url}/file.bin", dest, "file.bin")
+            self.assertEqual(dest.read_bytes(), NoLength.payload)
+        finally:
+            server.close()
+
+    def test_download_file_undoes_gzip_body(self):
+        server = _LocalHTTPServer(_GzipHandler)
+        try:
+            dest = Path(tempfile.mkdtemp()) / "file.txt"
+            net_mod.download_file(f"{server.base_url}/file.txt", dest, "file.txt")
+            self.assertEqual(dest.read_bytes(), _GzipHandler.plain)
+        finally:
+            server.close()
+
+    def test_http_get_json_roundtrip_and_gzip(self):
+        server = _LocalHTTPServer(_JsonHandler)
+        try:
+            self.assertEqual(net_mod.http_get_json(f"{server.base_url}/data"), {"ok": True, "list": [1, 2, 3]})
+        finally:
+            server.close()
+        server = _LocalHTTPServer(_GzipJsonHandler)
+        try:
+            self.assertEqual(net_mod.http_get_json(f"{server.base_url}/data"), {"gzipped": True})
+        finally:
+            server.close()
+
+    def test_http_404_raises_http_error_and_optional_returns_none(self):
+        server = _LocalHTTPServer(_JsonHandler)
+        try:
+            with self.assertRaises(net_mod.HTTPError) as ctx:
+                net_mod.http_get_json(f"{server.base_url}/missing")
+            self.assertEqual(ctx.exception.status_code, 404)
+            self.assertIsNone(net_mod.http_get_json_optional(f"{server.base_url}/missing"))
+        finally:
+            server.close()
+
+    def test_connection_refused_raises_connection_error(self):
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()  # nothing listens here anymore
+        with self.assertRaises(net_mod.ConnectionError):
+            net_mod.http_get_json(f"http://127.0.0.1:{port}/x")
+
+    def test_slow_server_times_out_as_connection_error(self):
+        class Slow(BaseHTTPRequestHandler):
+            def do_GET(self):
+                time.sleep(10)
+
+            def log_message(self, *args):
+                pass
+
+        server = _LocalHTTPServer(Slow)
+        try:
+            with patch.object(net_mod, "HTTP_TIMEOUT", 1):
+                with self.assertRaises(net_mod.ConnectionError):
+                    net_mod.http_get_json(f"{server.base_url}/slow")
+        finally:
+            server.close()
+
+
+def _fake_java(writes_configs: bool, delay: float = 0.0) -> str:
+    """A fake `java` executable (a script) that optionally writes Paper's
+    config skeleton after an optional delay. Cross-platform."""
+    lines = []
+    if delay:
+        if os.name == "nt":
+            # `timeout` refuses to run with redirected stdin, so use ping as
+            # the classic Windows sleep.
+            lines.append(f"ping -n {int(delay) + 1} 127.0.0.1 >nul")
+        else:
+            lines.append(f"sleep {delay}")
+    if writes_configs:
+        if os.name == "nt":
+            lines += [
+                "mkdir config",
+                "echo _version: 30 > config\\paper-global.yml",
+                "echo unsupported-settings: >> config\\paper-global.yml",
+                "echo   allow-piston-duplication: false >> config\\paper-global.yml",
+                "echo settings: > bukkit.yml",
+                "echo   allow-end: true >> bukkit.yml",
+            ]
+        else:
+            lines += [
+                "mkdir -p config",
+                "printf '_version: 30\\n' > config/paper-global.yml",
+                "printf 'unsupported-settings:\\n' >> config/paper-global.yml",
+                "printf '  allow-piston-duplication: false\\n' >> config/paper-global.yml",
+                "printf 'settings:\\n' > bukkit.yml",
+                "printf '  allow-end: true\\n' >> bukkit.yml",
+            ]
+    if os.name == "nt":
+        path = Path(tempfile.gettempdir()) / f"fake_java_{os.getpid()}.bat"
+        path.write_text("@echo off\r\n" + "\r\n".join(lines) + "\r\n", encoding="utf-8")
+    else:
+        path = Path(tempfile.gettempdir()) / f"fake_java_{os.getpid()}.sh"
+        path.write_text("#!/usr/bin/env bash\n" + "\n".join(lines) + "\n", encoding="utf-8")
+        os.chmod(path, 0o755)
+    return str(path)
+
+
+class TestBootstrapConfigsReal(unittest.TestCase):
+    """Runs the real bootstrap_configs against a fake java executable instead
+    of mocking it away: config generation, missing java, and the timeout path."""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
+        self.addCleanup(lambda: [p.unlink(missing_ok=True) for p in Path(tempfile.gettempdir()).glob(f"fake_java_{os.getpid()}.*")])
+
+    def test_generates_configs_and_returns_true(self):
+        with patch("blizzards_installer.config.shutil.which", return_value=_fake_java(writes_configs=True)):
+            ok = bootstrap_configs(self.tmpdir, Path("paper-1.21.4.jar"))
+        self.assertTrue(ok)
+        self.assertTrue((self.tmpdir / "config" / "paper-global.yml").exists())
+        self.assertTrue((self.tmpdir / "bukkit.yml").exists())
+
+    def test_missing_java_returns_false_without_launching(self):
+        with patch("blizzards_installer.config.shutil.which", return_value=None):
+            self.assertFalse(bootstrap_configs(self.tmpdir, Path("server.jar")))
+        self.assertEqual(list(self.tmpdir.iterdir()), [])
+
+    def test_timeout_without_configs_returns_false(self):
+        with patch("blizzards_installer.config.shutil.which", return_value=_fake_java(writes_configs=False, delay=5)):
+            start = time.monotonic()
+            ok = bootstrap_configs(self.tmpdir, Path("server.jar"), timeout=2)
+        self.assertLess(time.monotonic() - start, 9)  # stops waiting once the java fake exits
+        self.assertFalse(ok)
+
+    def test_apply_gameplay_config_through_real_bootstrap(self):
+        answers = {
+            "tnt_dupe": True,
+            "block_break_exploits": False,
+            "headless_pistons": True,
+            "anti_xray": True,
+            "anti_xray_mode": 2,
+            "allow_end": False,
+        }
+        with patch("blizzards_installer.config.shutil.which", return_value=_fake_java(writes_configs=True)):
+            apply_gameplay_config(self.tmpdir, Path("paper-1.21.4.jar"), answers)
+        global_text = (self.tmpdir / "config" / "paper-global.yml").read_text(encoding="utf-8")
+        self.assertIn("allow-piston-duplication: true", global_text)
+        self.assertIn("allow-headless-pistons: true", global_text)
+        bukkit_text = (self.tmpdir / "bukkit.yml").read_text(encoding="utf-8")
+        self.assertIn("  allow-end: false", bukkit_text)
+        self.assertFalse((self.tmpdir / "MANUAL_CONFIG_NOTES.txt").exists())
+
+
+class TestActivitySpinner(unittest.TestCase):
+    def test_spinner_terminates_and_leaves_no_threads(self):
+        from blizzards_installer.ui import activity
+
+        before = threading.active_count()
+        with activity("test activity"):
+            time.sleep(0.35)
+        time.sleep(0.25)
+        self.assertEqual(threading.active_count(), before)
+
+    def test_spinner_cleans_up_when_body_raises(self):
+        from blizzards_installer.ui import activity
+
+        before = threading.active_count()
+        with self.assertRaises(RuntimeError):
+            with activity("boom activity"):
+                raise RuntimeError("boom")
+        time.sleep(0.25)
+        self.assertEqual(threading.active_count(), before)
+
+
+class TestInstallerMain(unittest.TestCase):
+    def test_interactive_keyboard_interrupt_exits_cleanly(self):
+        import installer
+
+        with patch.object(sys, "argv", ["installer.py"]), \
+                patch("blizzards_installer.update.available_update", return_value=None), \
+                patch.object(installer, "run_wizard", side_effect=KeyboardInterrupt), \
+                patch("builtins.input", side_effect=EOFError):
+            installer.main()  # must not raise
+
+    def test_unattended_runtime_error_exits_1(self):
+        import installer
+
+        with patch.object(sys, "argv", ["installer.py", "--quick"]), \
+                patch("blizzards_installer.update.available_update", return_value=None), \
+                patch.object(installer, "run_quick_unattended", side_effect=RuntimeError("boom")):
+            with self.assertRaises(SystemExit) as cm:
+                installer.main()
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_unattended_keyboard_interrupt_exits_130(self):
+        import installer
+
+        with patch.object(sys, "argv", ["installer.py", "--quick"]), \
+                patch("blizzards_installer.update.available_update", return_value=None), \
+                patch.object(installer, "run_quick_unattended", side_effect=KeyboardInterrupt):
+            with self.assertRaises(SystemExit) as cm:
+                installer.main()
+        self.assertEqual(cm.exception.code, 130)
+
+    def test_available_update_failure_is_swallowed(self):
+        import installer
+
+        with patch.object(sys, "argv", ["installer.py", "--quick"]), \
+                patch("blizzards_installer.update.available_update", side_effect=Exception("api down")), \
+                patch.object(installer, "run_quick_unattended"):
+            installer.main()  # must not raise
+
+
+class TestUpdateEdgeCases(unittest.TestCase):
+    def test_locked_server_jar_raises_friendly_runtime_error(self):
+        from blizzards_installer.wizard import update_existing_server
+
+        tmpdir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmpdir, ignore_errors=True)
+        write_manifest(tmpdir, server_type="paper", mc_version="1.21.4", ram_mb=2048, plugin_ids=[])
+        with patch("blizzards_installer.wizard.download_server_jar", side_effect=PermissionError):
+            with self.assertRaises(RuntimeError) as cm:
+                update_existing_server(tmpdir, read_manifest(tmpdir))
+        self.assertIn("still running", str(cm.exception))
+
+    def test_update_wizard_incomplete_manifest_warns_and_aborts(self):
+        from blizzards_installer.wizard import run_update_wizard
+
+        tmpdir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmpdir, ignore_errors=True)
+        (tmpdir / "blizzards-installer.json").write_text(
+            json.dumps({"tool": "blizzards-server-installer", "mc_version": "1.21.4"}),
+            encoding="utf-8",
+        )
+        answers = iter([str(tmpdir) + "\n"])
+        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(answers)):
+            run_update_wizard()  # must warn and return, not crash
+
+
+class TestWizardPlayitOptIn(unittest.TestCase):
+    """The Full wizard's playit.gg opt-in flow end to end: agent download,
+    secret storage and start-public script generation."""
+
+    def test_playit_opt_in_writes_public_files(self):
+        from blizzards_installer.wizard import run_wizard
+
+        server_dir = Path(tempfile.mkdtemp()) / "server"
+        answers = ["\n"] * 48
+        answers[0] = "2\n"  # Full setup
+        answers[3] = str(server_dir) + "\n"
+        answers[45] = "y\n"  # make joinable via playit.gg
+        answers[46] = "y\n"  # link with an agent secret
+        answers[47] = "secret_abc-123\n"
+
+        def fake_get_json(url, params=None):
+            if "piston-meta" in url:
+                return {"versions": [{"id": "1.21.4", "type": "release"}]}
+            if "mcjars" in url or "fill.papermc" in url:
+                return {"builds": [{"buildNumber": 1, "downloads": {"SERVER": {"url": "https://cdn.example/paper-1.21.4.jar"}}}]}
+            if "api.modrinth.com" in url:
+                slug = url.split("/project/")[1].split("/")[0]
+                return [{"version_type": "release", "date_published": "2024-06-01T00:00:00Z",
+                         "files": [{"primary": True, "url": f"https://cdn.example/{slug}.jar", "filename": f"{slug}.jar"}]}]
+            raise AssertionError(f"unexpected URL: {url}")
+
+        def fake_download(url, dest, label):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"fake jar")
+
+        def fake_install_agent(sdir):
+            playit = sdir / "playit"
+            playit.mkdir()
+            agent = playit / "playit-linux-amd64"
+            agent.write_bytes(b"agent")
+            return agent
+
+        def fake_bootstrap(dir_path, jar_path):
+            TestApplyGameplayConfig._write_fixture_configs(dir_path)
+            return True
+
+        calls = iter(answers)
+        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
+                patch("blizzards_installer.net.http_get_json", side_effect=fake_get_json), \
+                patch("blizzards_installer.net.download_file", side_effect=fake_download), \
+                patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap), \
+                patch("blizzards_installer.wizard.install_agent", side_effect=fake_install_agent):
+            run_wizard()
+
+        self.assertEqual((server_dir / "playit" / "secret.key").read_text(encoding="utf-8"), "secret_abc-123\n")
+        self.assertTrue((server_dir / "start-public.bat").exists())
+        self.assertTrue((server_dir / "start-public.sh").exists())
+        self.assertIn("playit.gg", (server_dir / "PUBLIC_SERVER.txt").read_text(encoding="utf-8"))
+        self.assertIn('--secret "secret_abc-123"', (server_dir / "start-public.bat").read_text(encoding="utf-8"))
+        self.assertIn('--secret "secret_abc-123"', (server_dir / "start-public.sh").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

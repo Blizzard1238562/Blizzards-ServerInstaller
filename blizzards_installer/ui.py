@@ -74,7 +74,10 @@ def activity(label: str) -> Iterator[None]:
     def _spin() -> None:
         i = 0
         while not stop.wait(0.1):
-            print(f"\r  {label}... {frames[i % 4]}", end="", flush=True)
+            try:
+                print(f"\r  {label}... {frames[i % 4]}", end="", flush=True)
+            except OSError:  # stdout closed (piped away) - stop quietly
+                return
             i += 1
 
     thread = threading.Thread(target=_spin, daemon=True)
@@ -84,7 +87,10 @@ def activity(label: str) -> Iterator[None]:
     finally:
         stop.set()
         thread.join()
-        print(f"\r  {label}... done")
+        try:
+            print(f"\r  {label}... done")
+        except OSError:
+            pass
 
 
 def ask_yes_no(question: str, default: bool = True) -> bool:
