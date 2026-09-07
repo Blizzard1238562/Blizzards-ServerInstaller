@@ -4,7 +4,9 @@ banner uses Unicode block art."""
 
 from __future__ import annotations
 
-from typing import Optional
+import threading
+from contextlib import contextmanager
+from typing import Iterator, Optional
 
 from .meta import VERSION
 
@@ -39,33 +41,59 @@ def banner() -> None:
 
 
 def section(title: str) -> None:
-    print()
-    print(f"--- {title} " + "-" * max(0, 55 - len(title)))
+    print(f"\n--- {title} " + "-" * max(0, 55 - len(title)))
+
+
+def _line(tag: str, msg: str) -> None:
+    print(f"  [{tag}] {msg}")
 
 
 def info(msg: str) -> None:
-    print(f"  [i] {msg}")
+    _line("i", msg)
 
 
 def ok(msg: str) -> None:
-    print(f"  [OK] {msg}")
+    _line("OK", msg)
 
 
 def warn(msg: str) -> None:
-    print(f"  [!] {msg}")
+    _line("!", msg)
 
 
 def error(msg: str) -> None:
-    print(f"  [X] {msg}")
+    _line("X", msg)
+
+
+@contextmanager
+def activity(label: str) -> Iterator[None]:
+    """Animated spinner while a blocking call runs, so the console never
+    looks frozen during network waits. Resolves to 'label... done'."""
+    stop = threading.Event()
+    frames = "|/-\\"
+
+    def _spin() -> None:
+        i = 0
+        while not stop.wait(0.1):
+            print(f"\r  {label}... {frames[i % 4]}", end="", flush=True)
+            i += 1
+
+    thread = threading.Thread(target=_spin, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+        print(f"\r  {label}... done")
 
 
 def ask_yes_no(question: str, default: bool = True) -> bool:
     """Yes/no prompt. The default (what pressing Enter selects) is always
     shown explicitly and the y/n letters stay lowercase so the suffix never
     changes shape depending on the default."""
-    default_label = "yes" if default else "no"
+    label = "yes" if default else "no"
     while True:
-        raw = input(f"  ? {question} [y/n] (default: {default_label}) ").strip().lower()
+        raw = input(f"  ? {question} [y/n] (default: {label}) ").strip().lower()
         if not raw:
             return default
         if raw in ("y", "yes"):
@@ -76,9 +104,8 @@ def ask_yes_no(question: str, default: bool = True) -> bool:
 
 
 def ask_text(question: str, default: Optional[str] = None) -> str:
-    suffix = f" [{default}]" if default is not None else ""
-    raw = input(f"  ? {question}{suffix}: ").strip()
-    return raw if raw else (default or "")
+    raw = input(f"  ? {question}{f' [{default}]' if default is not None else ''}: ").strip()
+    return raw or default or ""
 
 
 def ask_int(question: str, default: int) -> int:
@@ -95,12 +122,11 @@ def ask_int(question: str, default: int) -> int:
 def ask_choice(question: str, options: list[str], default_index: int = 0) -> int:
     print(f"  ? {question}")
     for idx, opt in enumerate(options, start=1):
-        marker = " (default)" if idx - 1 == default_index else ""
-        print(f"      {idx}) {opt}{marker}")
+        print(f"      {idx}) {opt}{' (default)' * (idx - 1 == default_index)}")
     while True:
         raw = input(f"    Choice [1-{len(options)}]: ").strip()
         if not raw:
             return default_index
         if raw.isdigit() and 1 <= int(raw) <= len(options):
             return int(raw) - 1
-        print("    Invalid choice.")
+        print("    Invalid choice.")
