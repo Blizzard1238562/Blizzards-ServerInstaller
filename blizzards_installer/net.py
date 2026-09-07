@@ -103,13 +103,9 @@ def _progress_readout(label: str, written: int, total: int, start: float) -> Non
         bar = "#" * (pct * width // 100)
         speed = written / elapsed / 1048576
         eta = (total - written) / (written / elapsed)
-        print(
-            f"\r      downloading {label}... [{bar:<{width}}] {pct:3d}% "
-            f"{written / 1048576:6.1f}/{total / 1048576:5.1f} MB "
-            f"{speed:4.1f} MB/s {eta:4.0f}s left",
-            end="",
-            flush=True,
-        )
+        print(f"\r      downloading {label}... [{bar:<{width}}] {pct:3d}% "
+              f"{written / 1048576:6.1f}/{total / 1048576:5.1f} MB {speed:4.1f} MB/s {eta:4.0f}s left",
+              end="", flush=True)
     else:
         frame = "|/-\\"[(written // DOWNLOAD_CHUNK) % 4]
         print(f"\r      {frame} downloading {label}... {written / 1048576:.1f} MB", end="", flush=True)
@@ -140,9 +136,7 @@ def _download_once(url: str, tmp: Path, label: str) -> None:
 
 def _retryable(exc: Exception) -> bool:
     """Transient failures worth one retry: network-level errors and 429/5xx."""
-    if isinstance(exc, ConnectionError):
-        return True
-    return isinstance(exc, HTTPError) and (exc.status_code == 429 or exc.status_code >= 500)
+    return isinstance(exc, ConnectionError) or isinstance(exc, HTTPError) and (exc.status_code == 429 or exc.status_code >= 500)
 
 
 def download_file(url: str, dest: Path, label: str, retries: int = 1) -> None:

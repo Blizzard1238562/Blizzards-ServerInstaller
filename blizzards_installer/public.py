@@ -201,16 +201,14 @@ def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     secret_arg = f' --secret "{secret}"' if secret else ""
 
     (server_dir / "start-public.bat").write_text(
-        "@echo off\r\n"
-        "setlocal\r\n"
+        "@echo off\r\n" "setlocal\r\n"
         "REM Starts the playit.gg agent in its own window (logging to\r\n"
         "REM playit\\agent.log) and then the server. Waits up to 30s for the\r\n"
         "REM tunnel address and prints it; it is also in the agent window and\r\n"
         "REM on the playit dashboard.\r\n"
         f'start "Blizzards Server - playit tunnel" cmd /c ""{agent}"{secret_arg} > playit\\agent.log 2>&1"\r\n'
         f'powershell -NoProfile -Command "{_win_tunnel_poll()}"\r\n'
-        f"java {flags} -jar \"{jar_name}\" --nogui\r\n"
-        + "pause\r\n",
+        f"java {flags} -jar \"{jar_name}\" --nogui\r\n" "pause\r\n",
         encoding="utf-8",
     )
 
@@ -226,11 +224,8 @@ def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
         "echo 'Waiting for the playit.gg tunnel address...'\n"
         'addr=""; for i in $(seq 1 "${PLAYIT_MAX_WAIT:-30}"); do\n'
         "  addr=$(grep -oE '[a-z0-9-]+\\.playit\\.gg(:[0-9]+)?' playit/agent.log 2>/dev/null | head -n1)\n"
-        '  [ -n "$addr" ] && break\n'
-        "  sleep 1\n"
-        "done\n"
-        'if [ -n "$addr" ]; then\n'
-        '  echo "Tunnel is up - players can join at: $addr"\n'
+        '  [ -n "$addr" ] && break\n' "  sleep 1\n" "done\n"
+        'if [ -n "$addr" ]; then\n' '  echo "Tunnel is up - players can join at: $addr"\n'
         "else\n"
         "  echo 'Tunnel address not found yet - check playit/agent.log or the playit dashboard.'\n"
         "fi\n"

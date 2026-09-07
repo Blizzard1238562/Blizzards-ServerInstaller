@@ -82,6 +82,18 @@ def _chmod(path: Path, mode: int) -> None:
         pass
 
 
+# The .stop-requested stop-check block appears twice in each start script
+# (before and after the java run) - generated verbatim both times.
+_STOP_CHECK_SH = ('  if [ -f .stop-requested ]; then\n'
+                  '    rm -f .stop-requested\n'
+                  '    echo "Server stopped."\n'
+                  '    exit 0\n'
+                  '  fi\n')
+
+_STOP_CHECK_BAT = ("if exist .stop-requested (", "  del .stop-requested",
+                   "  echo Server stopped.", "  exit /b 0", ")")
+
+
 def write_start_scripts(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     """start.bat/start.sh restart the server automatically after a crash
     (5 s pause between attempts). A deliberate stop never restarts: the
@@ -89,34 +101,19 @@ def write_start_scripts(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     leave a .stop-requested marker the loop checks before relaunching."""
     flags = _aikars_flags(ram_mb)
 
-    bat = server_dir / "start.bat"
-    bat.write_text(_bat(
-        "@echo off",
-        'cd /d "%~dp0"',
+    (server_dir / "start.bat").write_text(_bat(
+        "@echo off", 'cd /d "%~dp0"',
         "REM Starts the server. If it crashes it restarts automatically after",
         "REM 5 seconds; a deliberate stop never restarts (the in-game 'stop'",
         "REM command exits cleanly, and stop.bat/restart.bat leave a",
         "REM .stop-requested marker that this loop checks).",
         "if exist .stop-requested del .stop-requested",
-        ":loop",
-        "if exist .stop-requested (",
-        "  del .stop-requested",
-        "  echo Server stopped.",
-        "  exit /b 0",
-        ")",
+        ":loop", *_STOP_CHECK_BAT,
         f'java {flags} -jar "{jar_name}" --nogui',
-        "if exist .stop-requested (",
-        "  del .stop-requested",
-        "  echo Server stopped.",
-        "  exit /b 0",
-        ")",
-        "if not errorlevel 1 (",
-        "  echo Server stopped cleanly.",
-        "  exit /b 0",
-        ")",
+        *_STOP_CHECK_BAT,
+        "if not errorlevel 1 (", "  echo Server stopped cleanly.", "  exit /b 0", ")",
         "echo Server exited unexpectedly - restarting in 5 seconds (close this window to stop)...",
-        "timeout /t 5 /nobreak >nul",
-        "goto loop",
+        "timeout /t 5 /nobreak >nul", "goto loop",
     ), encoding="utf-8")
 
     sh = server_dir / "start.sh"
@@ -129,19 +126,9 @@ def write_start_scripts(server_dir: Path, jar_name: str, ram_mb: int) -> None:
         'cd "$(dirname "$0")"\n'
         "rm -f .stop-requested\n"
         "while true; do\n"
-        "  if [ -f .stop-requested ]; then\n"
-        "    rm -f .stop-requested\n"
-        '    echo "Server stopped."\n'
-        "    exit 0\n"
-        "  fi\n"
-        f'  java {flags} -jar "{jar_name}" --nogui\n'
+        f"{_STOP_CHECK_SH}  java {flags} -jar \"{jar_name}\" --nogui\n"
         "  status=$?\n"
-        "  if [ -f .stop-requested ]; then\n"
-        "    rm -f .stop-requested\n"
-        '    echo "Server stopped."\n'
-        "    exit 0\n"
-        "  fi\n"
-        "  if [ $status -eq 0 ]; then\n"
+        f"{_STOP_CHECK_SH}  if [ $status -eq 0 ]; then\n"
         '    echo "Server stopped cleanly."\n'
         "    exit 0\n"
         "  fi\n"
@@ -211,47 +198,34 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
     for script in (sh, restart_sh, backup_sh):
         _chmod(script, 0o755)
 
-    (server_dir / "stop.bat").write_text(
-        _bat(
-            "@echo off",
-            "REM Stops this server if it is running. Only the java process started",
-            "REM with this server's jar is stopped - other Java programs are left",
-            'REM alone. For a clean shutdown, type "stop" in the server console',
-            "REM instead; this script is for when that console window is gone.",
-            "REM The marker tells a running start.bat loop not to restart the",
-            "REM server after we kill it.",
-            "type nul > .stop-requested",
-            f'powershell -NoProfile -Command "{_win_kill(jar_name)}"',
-            "pause",
-        ),
-        encoding="utf-8",
-    )
+    (server_dir / "stop.bat").write_text(_bat(
+        "@echo off",
+        "REM Stops this server if it is running. Only the java process started",
+        "REM with this server's jar is stopped - other Java programs are left",
+        'REM alone. For a clean shutdown, type "stop" in the server console',
+        "REM instead; this script is for when that console window is gone.",
+        "REM The marker tells a running start.bat loop not to restart the",
+        "REM server after we kill it.",
+        "type nul > .stop-requested",
+        f'powershell -NoProfile -Command "{_win_kill(jar_name)}"', "pause",
+    ), encoding="utf-8")
 
-    (server_dir / "restart.bat").write_text(
-        _bat(
-            "@echo off",
-            "REM Restarts this server: stops the running instance (if any), waits",
-            "REM two seconds, then starts the server again in this window.",
-            "REM The marker makes the old start.bat loop exit instead of",
-            "REM restarting the server we are about to stop.",
-            "type nul > .stop-requested",
-            f'powershell -NoProfile -Command "{_win_kill(jar_name)}"',
-            "timeout /t 2 /nobreak >nul",
-            'call "%~dp0start.bat"',
-        ),
-        encoding="utf-8",
-    )
+    (server_dir / "restart.bat").write_text(_bat(
+        "@echo off",
+        "REM Restarts this server: stops the running instance (if any), waits",
+        "REM two seconds, then starts the server again in this window.",
+        "REM The marker makes the old start.bat loop exit instead of",
+        "REM restarting the server we are about to stop.",
+        "type nul > .stop-requested",
+        f'powershell -NoProfile -Command "{_win_kill(jar_name)}"',
+        "timeout /t 2 /nobreak >nul", 'call "%~dp0start.bat"',
+    ), encoding="utf-8")
 
-    (server_dir / "backup.bat").write_text(
-        _bat(
-            "@echo off",
-            "REM Backs up this server's worlds and plugins into the backups folder",
-            "REM as a timestamped zip, keeping only the 8 most recent backups.",
-            "REM Stop the server first for a fully consistent backup.",
-            'cd /d "%~dp0"',
-            "if not exist backups mkdir backups",
-            f'powershell -NoProfile -Command "{_win_backup()}"',
-            "pause",
-        ),
-        encoding="utf-8",
-    )
+    (server_dir / "backup.bat").write_text(_bat(
+        "@echo off",
+        "REM Backs up this server's worlds and plugins into the backups folder",
+        "REM as a timestamped zip, keeping only the 8 most recent backups.",
+        "REM Stop the server first for a fully consistent backup.",
+        'cd /d "%~dp0"', "if not exist backups mkdir backups",
+        f'powershell -NoProfile -Command "{_win_backup()}"', "pause",
+    ), encoding="utf-8")
