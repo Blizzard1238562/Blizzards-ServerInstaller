@@ -58,7 +58,8 @@ def _win_kill(jar_name: str) -> str:
 
 
 def _win_backup() -> str:
-    """One PowerShell one-liner zipping the worlds + plugins into backups/."""
+    """One PowerShell one-liner zipping the worlds + plugins into backups/,
+    then pruning everything but the 8 newest backups."""
     return (
         "$stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'; "
         "$targets = @(); "
@@ -68,6 +69,8 @@ def _win_backup() -> str:
         "start the server once first.' } "
         "else { Compress-Archive -Path $targets -DestinationPath "
         "(Join-Path 'backups' ('backup-' + $stamp + '.zip')) -Force; "
+        "Get-ChildItem 'backups\\backup-*.zip' | Sort-Object Name "
+        "-Descending | Select-Object -Skip 8 | Remove-Item; "
         "Write-Host ('Backup written: backups\\backup-' + $stamp + '.zip') }"
     )
 
@@ -189,8 +192,8 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
     backup_sh.write_text(
         "#!/usr/bin/env bash\n"
         "# Backs up the worlds and plugins folders into backups/ as a\n"
-        "# timestamped tar.gz. Stop the server first for a fully consistent\n"
-        "# backup.\n"
+        "# timestamped tar.gz, keeping only the 8 most recent backups. Stop\n"
+        "# the server first for a fully consistent backup.\n"
         'cd "$(dirname "$0")"\n' "mkdir -p backups\n"
         'stamp=$(date +%Y-%m-%d_%H-%M-%S)\n' "targets=()\n"
         "for d in world world_nether world_the_end plugins; do\n"
@@ -199,6 +202,9 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
         "if [ ${#targets[@]} -eq 0 ]; then\n"
         '  echo "Nothing to back up yet - start the server once first."\n' "  exit 0\n" "fi\n"
         'tar -czf "backups/backup-${stamp}.tar.gz" "${targets[@]}"\n'
+        "# Keep only the 8 most recent backups.\n"
+        "old=$(ls -1t backups/backup-*.tar.gz 2>/dev/null | tail -n +9)\n"
+        "[ -n \"$old\" ] && rm -f $old\n"
         'echo "Backup written: backups/backup-${stamp}.tar.gz"\n',
         encoding="utf-8",
     )
@@ -240,8 +246,8 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
         _bat(
             "@echo off",
             "REM Backs up this server's worlds and plugins into the backups folder",
-            "REM as a timestamped zip. Stop the server first for a fully",
-            "REM consistent backup.",
+            "REM as a timestamped zip, keeping only the 8 most recent backups.",
+            "REM Stop the server first for a fully consistent backup.",
             'cd /d "%~dp0"',
             "if not exist backups mkdir backups",
             f'powershell -NoProfile -Command "{_win_backup()}"',

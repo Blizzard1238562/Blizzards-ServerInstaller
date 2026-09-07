@@ -505,6 +505,38 @@ class TestStartScripts(unittest.TestCase):
         self.assertIn("if not errorlevel 1", bat)
         self.assertIn("status=$?", sh)
 
+    def test_backup_scripts_prune_to_newest_eight(self):
+        write_start_scripts(self.tmpdir, "paper-1.21.4.jar", 2048)
+        backup_bat = (self.tmpdir / "backup.bat").read_text(encoding="utf-8")
+        self.assertIn("Select-Object -Skip 8", backup_bat)
+        backup_sh = (self.tmpdir / "backup.sh").read_text(encoding="utf-8")
+        self.assertIn("tail -n +9", backup_sh)
+        self.assertIn("rm -f $old", backup_sh)
+
+
+@unittest.skipUnless(shutil.which("bash") and shutil.which("tar"), "requires bash + tar")
+class TestBackupRotation(unittest.TestCase):
+    def test_real_backup_run_prunes_oldest(self):
+        server_dir = Path(tempfile.mkdtemp(prefix="rot_"))
+        write_start_scripts(server_dir, "paper-1.21.4.jar", 1024)
+        (server_dir / "world").mkdir()
+        backups = server_dir / "backups"
+        backups.mkdir()
+        for i in range(10):
+            p = backups / f"backup-2026-09-0{i}_00-00-0{i}.tar.gz"
+            p.write_bytes(b"x")
+            os.utime(p, (1_700_000_000, 1_700_000_000 + i * 3600))  # deterministic ages
+        r = subprocess.run(["bash", str(server_dir / "backup.sh")],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        files = sorted(p.name for p in backups.glob("backup-*.tar.gz"))
+        # 10 old + 1 new = 11, pruned to the 8 newest: the 3 oldest are gone.
+        self.assertEqual(len(files), 8)
+        self.assertNotIn("backup-2026-09-00_00-00-00.tar.gz", files)
+        self.assertNotIn("backup-2026-09-01_00-00-01.tar.gz", files)
+        self.assertNotIn("backup-2026-09-02_00-00-02.tar.gz", files)
+        self.assertIn("backup-2026-09-03_00-00-03.tar.gz", files)
+
 
 @unittest.skipUnless(shutil.which("bash") and os.name == "posix", "requires bash on POSIX")
 class TestStartScriptLoopPosix(unittest.TestCase):
