@@ -18,5 +18,3 @@ Split by concern so each module stays small and testable:
 
 The entry point is installer.py at the repository root.
 """
-
-__version__ = "1.2.0"

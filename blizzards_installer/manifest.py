@@ -68,4 +68,4 @@ def read_manifest(server_dir: Path) -> dict | None:
 def touch_manifest(server_dir: Path, manifest: dict) -> None:
     """Bump the 'updated' timestamp after an update run."""
     manifest["updated"] = _utc_now()
-    manifest_path(server_dir).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    manifest_path(server_dir).write_text(json.dumps(manifest, indent=2), encoding="utf-8")

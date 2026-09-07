@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import net
-from .ui import info, ok, warn
+from .ui import activity, info, ok, warn
 
 SERVER_TYPES = {
     "paper": {"mcjars": "PAPER", "modrinth_loader": "paper", "label": "Paper"},
@@ -40,14 +40,16 @@ MCJARS_API_BASES = [
 PAPERMC_FILL_API = "https://fill.papermc.io/v3/projects"
 
 
-def _find_jar_url(obj, _depth: int = 0):
+def _find_jar_url(obj, _depth: int = 0) -> Optional[str]:
     """Recursively hunt a parsed JSON structure for a .jar download URL.
     Prefers a 'downloads' sub-object shaped like {"SERVER": {"url": ...}} /
     {"server": {"url": ...}} if present (this matches mcjars' documented
     build/download concept), otherwise falls back to any http(s) URL string
     ending in .jar found anywhere in the structure."""
-    if _depth > 12:
+    if _depth > 12 or obj is None:
         return None
+    if isinstance(obj, str):
+        return obj if obj.startswith("http") and obj.endswith(".jar") else None
     if isinstance(obj, dict):
         downloads = obj.get("downloads")
         if isinstance(downloads, dict):
@@ -61,18 +63,10 @@ def _find_jar_url(obj, _depth: int = 0):
             val = obj.get(key)
             if isinstance(val, str) and val.startswith("http") and val.endswith(".jar"):
                 return val
-        for v in obj.values():
-            found = _find_jar_url(v, _depth + 1)
-            if found:
-                return found
-    elif isinstance(obj, list):
-        for item in obj:
-            found = _find_jar_url(item, _depth + 1)
-            if found:
-                return found
-    elif isinstance(obj, str):
-        if obj.startswith("http") and obj.endswith(".jar"):
-            return obj
+    for v in obj.values() if isinstance(obj, dict) else obj if isinstance(obj, list) else []:
+        found = _find_jar_url(v, _depth + 1)
+        if found:
+            return found
     return None
 
 
@@ -84,18 +78,13 @@ def _try_mcjars(mcjars_type: str, mc_version: str) -> Optional[str]:
             except Exception:
                 continue
             builds = data.get("builds") if isinstance(data, dict) else data
-            if not builds:
-                continue
             # Best-effort: newest build first. mcjars typically returns newest
             # first already; if entries carry an explicit build number we sort
             # on that to be safe.
-            if isinstance(builds, list) and builds and isinstance(builds[0], dict):
-                if all("buildNumber" in b or "build" in b for b in builds if isinstance(b, dict)):
-                    builds = sorted(
-                        builds,
-                        key=lambda b: b.get("buildNumber", b.get("build", 0)),
-                        reverse=True,
-                    )
+            if isinstance(builds, list) and builds and isinstance(builds[0], dict) and all(
+                "buildNumber" in b or "build" in b for b in builds
+            ):
+                builds = sorted(builds, key=lambda b: b.get("buildNumber", b.get("build", 0)), reverse=True)
             url = _find_jar_url(builds)
             if url:
                 return url
@@ -112,8 +101,7 @@ def _try_papermc_fill(mc_version: str) -> Optional[str]:
     # Prefer STABLE channel builds, newest last per PaperMC docs -> take the
     # last stable one, otherwise just the last build overall.
     stable = [b for b in data if b.get("channel") == "STABLE"]
-    pool = stable if stable else data
-    build = pool[-1]
+    build = (stable or data)[-1]
     try:
         return build["downloads"]["server:default"]["url"]
     except (KeyError, TypeError):
@@ -123,11 +111,13 @@ def _try_papermc_fill(mc_version: str) -> Optional[str]:
 def download_server_jar(server_type: str, mc_version: str, dest: Path) -> None:
     server = SERVER_TYPES[server_type]
     info(f"Looking up {server['label']} {mc_version} on mcjars.app...")
-    url = _try_mcjars(server["mcjars"], mc_version)
+    with activity(f"Contacting mcjars.app for {server['label']} builds"):
+        url = _try_mcjars(server["mcjars"], mc_version)
 
     if not url and server_type == "paper":
         warn("mcjars.app did not return a usable build, falling back to the official PaperMC API...")
-        url = _try_papermc_fill(mc_version)
+        with activity("Contacting the PaperMC API"):
+            url = _try_papermc_fill(mc_version)
 
     if not url:
         raise RuntimeError(

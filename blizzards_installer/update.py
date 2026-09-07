@@ -24,9 +24,7 @@ def _parse_version(text: str) -> tuple[int, ...]:
     Suffixes like '-beta.1' are ignored: a prerelease tag then compares equal
     to the release it precedes, which is the safe direction for a hint."""
     match = re.match(r"\s*v?(\d+(?:\.\d+)*)", text or "")
-    if not match:
-        return ()
-    return tuple(int(part) for part in match.group(1).split("."))
+    return tuple(int(part) for part in match.group(1).split(".")) if match else ()
 
 
 def _latest_release_tag(timeout: int = CHECK_TIMEOUT) -> str | None:

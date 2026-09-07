@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import net
-from .ui import error, info, ok, section, warn
+from .ui import activity, error, info, ok, section, warn
 
 MODRINTH_API = "https://api.modrinth.com/v2"
 
@@ -46,9 +46,7 @@ def plugins_for_server(plugins: list[dict], server_type: str) -> tuple[list[dict
     plugins.json) and skips the rest. Every other type is Paper-compatible
     and gets the full list."""
     if server_type == "folia":
-        offered = [p for p in plugins if p.get("folia")]
-        skipped = [p for p in plugins if not p.get("folia")]
-        return offered, skipped
+        return [p for p in plugins if p.get("folia")], [p for p in plugins if not p.get("folia")]
     return plugins, []
 
 
@@ -70,38 +68,37 @@ def resolve_dependencies(selected_ids: set[str], plugins_by_id: dict[str, dict])
 
 def _primary_file(files: list[dict]) -> Optional[dict]:
     """Pick the download entry Modrinth marks as primary, else the first."""
-    if not files:
+    return next((f for f in files if f.get("primary")), None) or (files[0] if files else None)
+
+
+def _pick_version(versions: list[dict]) -> Optional[dict]:
+    """Newest release/beta/alpha (release preferred) from a Modrinth version list."""
+    if not versions:
         return None
-    return next((f for f in files if f.get("primary")), files[0])
+    rank = {"release": 0, "beta": 1, "alpha": 2}
+    by_date = sorted(versions, key=lambda v: v.get("date_published", ""), reverse=True)
+    return sorted(by_date, key=lambda v: rank.get(v.get("version_type", "release"), 3))[0]
 
 
 def get_modrinth_plugin_download(slug: str, mc_version: str, loader: str) -> tuple[str, str]:
     """Return (download_url, filename) for the newest compatible version of a
     Modrinth project, preferring an exact game-version + loader match and
     falling back to a loader-only match (newest) with a warning if needed."""
-
-    def _pick(versions: list[dict]) -> Optional[dict]:
-        if not versions:
-            return None
-        rank = {"release": 0, "beta": 1, "alpha": 2}
-        # Two stable sorts: newest-first within each stability tier, then
-        # group by tier (release preferred over beta/alpha).
-        by_date = sorted(versions, key=lambda v: v.get("date_published", ""), reverse=True)
-        by_tier = sorted(by_date, key=lambda v: rank.get(v.get("version_type", "release"), 3))
-        return by_tier[0]
-
-    params_exact = {
-        "loaders": json.dumps([loader]),
-        "game_versions": json.dumps([mc_version]),
-    }
-    versions = net.http_get_json_optional(f"{MODRINTH_API}/project/{slug}/version", params=params_exact)
-    chosen = _pick(versions) if isinstance(versions, list) else None
+    with activity(f"Checking Modrinth for '{slug}'"):
+        versions = net.http_get_json_optional(
+            f"{MODRINTH_API}/project/{slug}/version",
+            params={"loaders": json.dumps([loader]), "game_versions": json.dumps([mc_version])},
+        )
+    chosen = _pick_version(versions) if isinstance(versions, list) else None
 
     if not chosen:
         warn(f"No build of '{slug}' targets Minecraft {mc_version} exactly - grabbing the newest {loader} build instead.")
-        params_loose = {"loaders": json.dumps([loader])}
-        versions = net.http_get_json_optional(f"{MODRINTH_API}/project/{slug}/version", params=params_loose)
-        chosen = _pick(versions) if isinstance(versions, list) else None
+        with activity(f"Checking Modrinth for '{slug}'"):
+            versions = net.http_get_json_optional(
+                f"{MODRINTH_API}/project/{slug}/version",
+                params={"loaders": json.dumps([loader])},
+            )
+        chosen = _pick_version(versions) if isinstance(versions, list) else None
 
     if not chosen:
         raise RuntimeError(f"No downloadable versions found for Modrinth project '{slug}'.")
@@ -134,8 +131,7 @@ def write_tab_config(server_dir: Path, server_name: str, color_code: str = "") -
     ᴍɪɴᴇᴄʀᴀꜰᴛ) on top and an online-player count below. Everything else is
     left to TAB's own defaults (it re-adds missing options on load).
     color_code is an optional legacy color code (e.g. "&6") applied to the
-    name line only.
-    """
+    name line only."""
     tab_dir = server_dir / "plugins" / "TAB"
     tab_dir.mkdir(parents=True, exist_ok=True)
     header_line = _yaml_double_quote(f"{color_code}{small_caps(server_name)}")
@@ -175,34 +171,5 @@ def small_caps(text: str) -> str:
 
 # Unicode small caps for a-z/A-Z (Minecraft small font). x has no small-cap
 # form, so it maps to itself.
-SMALL_CAPS = {}
-for _lower, _upper, _glyph in [
-    ("a", "A", "ᴀ"),
-    ("b", "B", "ʙ"),
-    ("c", "C", "ᴄ"),
-    ("d", "D", "ᴅ"),
-    ("e", "E", "ᴇ"),
-    ("f", "F", "ꜰ"),
-    ("g", "G", "ɢ"),
-    ("h", "H", "ʜ"),
-    ("i", "I", "ɪ"),
-    ("j", "J", "ᴊ"),
-    ("k", "K", "ᴋ"),
-    ("l", "L", "ʟ"),
-    ("m", "M", "ᴍ"),
-    ("n", "N", "ɴ"),
-    ("o", "O", "ᴏ"),
-    ("p", "P", "ᴘ"),
-    ("q", "Q", "ǫ"),
-    ("r", "R", "ʀ"),
-    ("s", "S", "ꜱ"),
-    ("t", "T", "ᴛ"),
-    ("u", "U", "ᴜ"),
-    ("v", "V", "ᴠ"),
-    ("w", "W", "ᴡ"),
-    ("x", "X", "x"),
-    ("y", "Y", "ʏ"),
-    ("z", "Z", "ᴢ"),
-]:
-    SMALL_CAPS[ord(_lower)] = _glyph
-    SMALL_CAPS[ord(_upper)] = _glyph
+_SMALL_CAP_GLYPHS = "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ"
+SMALL_CAPS = str.maketrans("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", _SMALL_CAP_GLYPHS * 2)

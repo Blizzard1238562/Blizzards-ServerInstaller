@@ -37,8 +37,7 @@ class HTTPError(Exception):
         self.status_code = code
         self.code = code  # urllib's urllib.error.HTTPError names it .code
         self.reason = reason
-        detail = f" ({reason})" if reason else ""
-        super().__init__(f"HTTP {code} for {url}{detail}")
+        super().__init__(f"HTTP {code} for {url}" + (f" ({reason})" if reason else ""))
 
 
 class ConnectionError(OSError):
@@ -50,8 +49,7 @@ def _open(url: str):
 
     Returns the response object with a read()/readinto() file-like API and a
     .headers mapping. Non-2xx responses and network failures are raised as
-    HTTPError / ConnectionError.
-    """
+    HTTPError / ConnectionError."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         return urllib.request.urlopen(request, timeout=HTTP_TIMEOUT, context=_SSL_CONTEXT)
@@ -72,13 +70,11 @@ def _decode_body(resp) -> bytes:
 
 
 def http_get_json(url: str, params: dict | None = None) -> dict | list:
-    query = urllib.parse.urlencode(params) if params else ""
-    if query:
+    if params:
         sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}{query}"
+        url = f"{url}{sep}{urllib.parse.urlencode(params)}"
     with _open(url) as resp:
-        body = _decode_body(resp)
-    return json.loads(body.decode("utf-8"))
+        return json.loads(_decode_body(resp).decode("utf-8"))
 
 
 def http_get_json_optional(url: str, params: dict | None = None):
@@ -97,8 +93,7 @@ def http_get_json_optional(url: str, params: dict | None = None):
 def download_file(url: str, dest: Path, label: str) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     with _open(url) as resp:
-        content_length = resp.headers.get("Content-Length")
-        total = int(content_length) if content_length else 0
+        total = int(resp.headers.get("Content-Length") or 0)
         gzip_body = resp.headers.get("Content-Encoding", "").lower() == "gzip"
         tmp = dest.with_suffix(dest.suffix + ".part")
         with open(tmp, "wb") as f:
@@ -116,8 +111,9 @@ def download_file(url: str, dest: Path, label: str) -> None:
                     written += len(chunk)
                     if total:
                         pct = written * 100 // total
-                        print(f"\r      downloading {label}... {pct:3d}%", end="", flush=True)
+                        readout = f"{pct:3d}%"
                     else:
-                        print(f"\r      downloading {label}... {written // 1024} KB", end="", flush=True)
+                        readout = f"{written // 1024} KB"
+                    print(f"\r      downloading {label}... {readout}", end="", flush=True)
         print()
         tmp.replace(dest)

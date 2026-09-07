@@ -72,19 +72,14 @@ def suggest_ram_mb(total_mb: int) -> int:
 
     Half of the machine's memory, capped at 8 GB (allocating beyond that to a
     single Minecraft server rarely helps), floored to a 256 MB step and never
-    below 1 GB so tiny machines still leave room for the OS.
-    """
+    below 1 GB so tiny machines still leave room for the OS."""
     if not total_mb or total_mb <= 0:
         return DEFAULT_RAM_MB
-    half = total_mb // 2
-    suggested = min(half, MAX_RECOMMENDED_MB)
-    suggested = suggested // 256 * 256
-    return max(1024, suggested)
+    suggested = min(total_mb // 2, MAX_RECOMMENDED_MB)
+    return max(1024, suggested // 256 * 256)
 
 
 def recommended_ram_mb() -> int:
     """Suggested default RAM for the wizard; never raises."""
     total = total_ram_mb()
-    if total is None:
-        return DEFAULT_RAM_MB
-    return suggest_ram_mb(total)
+    return DEFAULT_RAM_MB if total is None else suggest_ram_mb(total)

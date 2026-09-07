@@ -5,7 +5,7 @@ use."""
 from __future__ import annotations
 
 from . import net
-from .ui import ask_choice, ask_text, warn
+from .ui import activity, ask_choice, ask_text, warn
 
 MOJANG_VERSION_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 
@@ -13,11 +13,11 @@ MANUAL_VERSION_PROMPT = "Enter the Minecraft version (e.g. 1.21.4)"
 
 
 def get_recent_release_versions(limit: int = 15) -> list[str]:
-    data = net.http_get_json(MOJANG_VERSION_MANIFEST)
+    with activity("Fetching Minecraft version list"):
+        data = net.http_get_json(MOJANG_VERSION_MANIFEST)
     if not isinstance(data, dict):
         return []
-    versions = [v["id"] for v in data.get("versions", []) if v.get("type") == "release"]
-    return versions[:limit]
+    return [v["id"] for v in data.get("versions", []) if v.get("type") == "release"][:limit]
 
 
 def choose_minecraft_version() -> str:
