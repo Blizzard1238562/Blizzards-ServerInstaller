@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from .meta import USER_AGENT
+from .ui import warn
 
 HTTP_TIMEOUT = 30
 DOWNLOAD_CHUNK = 1 << 16
@@ -114,12 +115,11 @@ def _progress_readout(label: str, written: int, total: int, start: float) -> Non
         print(f"\r      {frame} downloading {label}... {written / 1048576:.1f} MB", end="", flush=True)
 
 
-def download_file(url: str, dest: Path, label: str) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
+def _download_once(url: str, tmp: Path, label: str) -> None:
+    """Stream one download attempt into tmp, showing progress on one line."""
     with _open(url) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         gzip_body = resp.headers.get("Content-Encoding", "").lower() == "gzip"
-        tmp = dest.with_suffix(dest.suffix + ".part")
         start = time.monotonic()
         with open(tmp, "wb") as f:
             if gzip_body:
@@ -135,5 +135,33 @@ def download_file(url: str, dest: Path, label: str) -> None:
                     f.write(chunk)
                     written += len(chunk)
                     _progress_readout(label, written, total, start)
-        print()
-        tmp.replace(dest)
+    print()
+
+
+def _retryable(exc: Exception) -> bool:
+    """Transient failures worth one retry: network-level errors and 429/5xx."""
+    if isinstance(exc, ConnectionError):
+        return True
+    return isinstance(exc, HTTPError) and (exc.status_code == 429 or exc.status_code >= 500)
+
+
+def download_file(url: str, dest: Path, label: str, retries: int = 1) -> None:
+    """Download url to dest, retrying transient failures once with a short
+    backoff, and never leaving a half-written .part file behind."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    for attempt in range(retries + 1):
+        try:
+            _download_once(url, tmp, label)
+            tmp.replace(dest)
+            return
+        except Exception as exc:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if attempt < retries and _retryable(exc):
+                warn(f"Download failed ({exc}) - retrying in 2 seconds...")
+                time.sleep(2)
+                continue
+            raise

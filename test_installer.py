@@ -22,6 +22,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+# A real sleep captured before any test patches time.sleep - server handlers
+# use it to hang deliberately, unaffected by net.time.sleep mocks.
+_REAL_SLEEP = time.sleep
+
 from blizzards_installer import net as net_mod
 
 from blizzards_installer.config import (
@@ -1523,6 +1527,24 @@ class _GzipJsonHandler(BaseHTTPRequestHandler):
         pass
 
 
+class _FlakyHandler(BaseHTTPRequestHandler):
+    """Serves normally, but the first request hangs past the timeout."""
+    payload = b"retry me " * 1000
+    calls = 0
+
+    def do_GET(self):
+        type(self).calls += 1
+        if type(self).calls == 1:
+            _REAL_SLEEP(5)  # longer than the 1s timeout patched in the test
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(self.payload)))
+        self.end_headers()
+        self.wfile.write(self.payload)
+
+    def log_message(self, *args):
+        pass
+
+
 class _JsonHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/missing":
@@ -1602,6 +1624,50 @@ class TestRealNetworkPath(unittest.TestCase):
         probe.close()  # nothing listens here anymore
         with self.assertRaises(net_mod.ConnectionError):
             net_mod.http_get_json(f"http://127.0.0.1:{port}/x")
+
+    def test_transient_timeout_is_retried_and_succeeds(self):
+        _FlakyHandler.calls = 0
+        server = _LocalHTTPServer(_FlakyHandler)
+        try:
+            dest = Path(tempfile.mkdtemp()) / "file.bin"
+            with patch.object(net_mod, "HTTP_TIMEOUT", 1), patch("blizzards_installer.net.time.sleep"):
+                net_mod.download_file(f"{server.base_url}/file.bin", dest, "file.bin")
+            self.assertEqual(dest.read_bytes(), _FlakyHandler.payload)
+            self.assertGreaterEqual(_FlakyHandler.calls, 2)
+        finally:
+            server.close()
+
+    def test_server_error_retried_then_raises_and_cleans_part(self):
+        class Err500(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(500)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = _LocalHTTPServer(Err500)
+        try:
+            dest = Path(tempfile.mkdtemp()) / "file.bin"
+            with patch("blizzards_installer.net.time.sleep"):
+                with self.assertRaises(net_mod.HTTPError) as ctx:
+                    net_mod.download_file(f"{server.base_url}/file.bin", dest, "file.bin")
+            self.assertEqual(ctx.exception.status_code, 500)
+            self.assertFalse(Path(str(dest) + ".part").exists())
+        finally:
+            server.close()
+
+    def test_404_is_not_retried(self):
+        server = _LocalHTTPServer(_JsonHandler)  # /missing answers 404
+        try:
+            dest = Path(tempfile.mkdtemp()) / "file.bin"
+            with patch("blizzards_installer.net.time.sleep") as mock_sleep:
+                with self.assertRaises(net_mod.HTTPError):
+                    net_mod.download_file(f"{server.base_url}/missing", dest, "file.bin")
+            mock_sleep.assert_not_called()
+            self.assertFalse(Path(str(dest) + ".part").exists())
+        finally:
+            server.close()
 
     def test_slow_server_times_out_as_connection_error(self):
         class Slow(BaseHTTPRequestHandler):
