@@ -12,6 +12,8 @@ world and configs the user has since changed.
 from __future__ import annotations
 
 import re
+import shutil
+import struct
 import uuid
 from pathlib import Path
 
@@ -114,6 +116,39 @@ def _scripts_and_manifest(
     section("Start scripts")
     write_start_scripts(server_dir, jar_name, ram_mb)
     write_manifest(server_dir, server_type=server_type, mc_version=mc_version, ram_mb=ram_mb, plugin_ids=plugin_ids)
+
+
+def _png_size(data: bytes) -> tuple[int, int] | None:
+    """(width, height) from a PNG's IHDR chunk; None if the header is cut off."""
+    if len(data) < 24 or data[12:16] != b"IHDR":
+        return None
+    return struct.unpack(">II", data[16:24])
+
+
+def _copy_server_icon(server_dir: Path) -> None:
+    """Optional server-icon.png for the multiplayer list. Any valid PNG is
+    accepted (64x64 is what the client displays); bad input only warns, so
+    the install never fails over an icon."""
+    if not ask_yes_no("Use a custom server icon (shown in the multiplayer server list)?", False):
+        return
+    path = Path(ask_text("Path to a PNG image (64x64 recommended)")).expanduser()
+    try:
+        data = path.read_bytes()
+    except OSError:
+        warn(f"Could not read '{path}' - skipping the server icon.")
+        return
+    if len(data) > 2 * 1024 * 1024:
+        warn("That image is larger than 2 MB - skipping the server icon.")
+        return
+    size = _png_size(data) if data.startswith(b"\x89PNG\r\n\x1a\n") else None
+    if size is None:
+        warn("That file is not a valid PNG - skipping the server icon.")
+        return
+    width, height = size
+    if (width, height) != (64, 64):
+        warn(f"Icon is {width}x{height} px - the server list shows 64x64, so it may look scaled.")
+    shutil.copyfile(path, server_dir / "server-icon.png")
+    ok("Copied server-icon.png")
 
 
 def _done_message(server_dir: Path, chosen_plugins: list[dict]) -> None:
@@ -519,9 +554,12 @@ def run_full_wizard() -> None:
 
     ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", recommended_ram_mb(), MIN_RAM_MB, MAX_RAM_MB)
 
+    section("Server icon (optional)")
+    _copy_server_icon(server_dir)
+
     whitelist_label = (", ".join(e["name"] for e in whitelist_entries) or "enabled (no names added yet)") if whitelist else "disabled"
     ops_label = (", ".join(e["name"] for e in op_entries) or "enabled (no names added yet)") if operators else "none"
-    _summary([
+    summary_rows = [
         ("Server software", server["label"]),
         ("Server name", server_name),
         ("MC version", mc_version),
@@ -535,7 +573,10 @@ def run_full_wizard() -> None:
         ("Plugins", ", ".join(p["name"] for p in chosen_plugins) or "(none)"),
         ("TNT duplication", str(answers["tnt_dupe"])),
         ("Anti-Xray", str(answers["anti_xray"]) + (f" (mode {answers['anti_xray_mode']})" if answers["anti_xray"] else "")),
-    ])
+    ]
+    if (server_dir / "server-icon.png").exists():
+        summary_rows.append(("Server icon", "custom PNG"))
+    _summary(summary_rows)
     if ask_yes_no("Show the exact config changes that will be written before installing?", False):
         _print_config_preview(props_overrides, whitelist_entries, op_entries, answers)
     if not ask_yes_no("Proceed with installation?", True):

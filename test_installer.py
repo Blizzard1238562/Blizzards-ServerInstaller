@@ -1220,9 +1220,9 @@ class TestWizardEndToEnd(unittest.TestCase):
         # difficulty, online/whitelist/pvp/hardcore/flight, view/sim distance,
         # world seed, gamemode, spawn protection, nether, allow-end, command
         # operators, TNT dupe, block break, headless pistons, anti-xray(+mode),
-        # 14 plugin prompts, RAM, config preview, proceed, playit. Defaults
-        # ("\n") answer the rest.
-        answers = ["\n"] * 46
+        # 14 plugin prompts, RAM, server icon, config preview, proceed,
+        # playit. Defaults ("\n") answer the rest.
+        answers = ["\n"] * 47
         answers[0] = "2\n"  # mode -> Full setup (index 1)
         answers[3] = str(server_dir) + "\n"  # install directory
         answers[5] = "2\n"  # server name color -> index 1 = Gray (&7)
@@ -1302,8 +1302,8 @@ class TestWizardEndToEnd(unittest.TestCase):
 
     def test_full_wizard_whitelist_online_mode_resolves_via_mojang(self):
         # prompt order: mode=0, dir=3, online-mode=9, whitelist=10, names=11;
-        # enabling the whitelist adds the name prompt, so 47 inputs total.
-        answers = ["\n"] * 47
+        # enabling the whitelist adds the name prompt, so 48 inputs total.
+        answers = ["\n"] * 48
         answers[0] = "2\n"
         answers[10] = "y\n"  # enable whitelist
         answers[11] = "  Steve , alex \n"  # messy spacing must not break parsing
@@ -1316,7 +1316,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(whitelist[1]["name"], "alex")
 
     def test_full_wizard_whitelist_offline_mode_uses_offline_uuids(self):
-        answers = ["\n"] * 47
+        answers = ["\n"] * 48
         answers[0] = "2\n"
         answers[9] = "n\n"  # online mode off
         answers[10] = "y\n"  # enable whitelist
@@ -1329,7 +1329,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(whitelist, [{"uuid": "5627dd98-e6be-3c21-b8a8-e92344183641", "name": "Steve"}])
 
     def test_full_wizard_whitelist_skips_unresolvable_names(self):
-        answers = ["\n"] * 47
+        answers = ["\n"] * 48
         answers[0] = "2\n"
         answers[10] = "y\n"
         answers[11] = "Steve, ghost\n"  # 'ghost' -> Mojang 204
@@ -1338,7 +1338,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual([e["name"] for e in whitelist], ["Steve"])
 
     def test_full_wizard_whitelist_without_names_writes_nothing(self):
-        answers = ["\n"] * 47
+        answers = ["\n"] * 48
         answers[0] = "2\n"
         answers[10] = "y\n"
         answers[11] = "\n"  # no names entered
@@ -1348,7 +1348,7 @@ class TestWizardEndToEnd(unittest.TestCase):
     def test_full_wizard_operators_online_mode(self):
         # prompt order: mode=0, online-mode=9, whitelist=10 (no), operators=11,
         # operator names=12, everything after defaulted.
-        answers = ["\n"] * 47
+        answers = ["\n"] * 48
         answers[0] = "2\n"
         answers[11] = "y\n"  # add operators
         answers[12] = "Steve, Notch\n"
@@ -1362,7 +1362,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertFalse((server_dir / "whitelist.json").exists())
 
     def test_full_wizard_operators_offline_mode_uses_offline_uuids(self):
-        answers = ["\n"] * 47
+        answers = ["\n"] * 48
         answers[0] = "2\n"
         answers[9] = "n\n"  # online mode off
         answers[11] = "y\n"
@@ -1372,16 +1372,16 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertEqual(ops[0]["uuid"], offline_player_uuid("Steve"))
 
     def test_full_wizard_operators_default_off_writes_nothing(self):
-        answers = ["\n"] * 46  # operators prompt answered with the default (no)
+        answers = ["\n"] * 47  # operators prompt answered with the default (no)
         answers[0] = "2\n"
         server_dir = self._full_wizard_with(answers)
         self.assertFalse((server_dir / "ops.json").exists())
 
     def test_full_wizard_config_preview_shows_exact_values(self):
-        # whitelist+operators both enabled, so 48 prompts (2 extra name asks).
+        # whitelist+operators both enabled, so 49 prompts (2 extra name asks).
         out = io.StringIO()
         d = Path(tempfile.mkdtemp()) / "server"
-        answers = ["\n"] * 48
+        answers = ["\n"] * 49
         answers[0] = "2\n"
         answers[3] = str(d) + "\n"
         answers[9] = "n\n"  # offline mode (no Mojang call needed)
@@ -1391,7 +1391,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         answers[13] = "Notch\n"
         answers[23] = "n\n"  # Allow the End? -> no
         answers[25] = "y\n"  # TNT duplication -> yes
-        answers[45] = "y\n"  # show config preview
+        answers[46] = "y\n"  # show config preview
 
         def fake_bootstrap(dir_path, jar_path):
             TestApplyGameplayConfig._write_fixture_configs(dir_path)
@@ -1884,12 +1884,12 @@ class TestWizardPlayitOptIn(unittest.TestCase):
         from blizzards_installer.wizard import run_wizard
 
         server_dir = Path(tempfile.mkdtemp()) / "server"
-        answers = ["\n"] * 48
+        answers = ["\n"] * 49
         answers[0] = "2\n"  # Full setup
         answers[3] = str(server_dir) + "\n"
-        answers[45] = "y\n"  # make joinable via playit.gg
-        answers[46] = "y\n"  # link with an agent secret
-        answers[47] = "secret_abc-123\n"
+        answers[46] = "y\n"  # make joinable via playit.gg
+        answers[47] = "y\n"  # link with an agent secret
+        answers[48] = "secret_abc-123\n"
 
         def fake_get_json(url, params=None):
             if "piston-meta" in url:
@@ -1931,6 +1931,112 @@ class TestWizardPlayitOptIn(unittest.TestCase):
         self.assertIn("playit.gg", (server_dir / "PUBLIC_SERVER.txt").read_text(encoding="utf-8"))
         self.assertIn('--secret "secret_abc-123"', (server_dir / "start-public.bat").read_text(encoding="utf-8"))
         self.assertIn('--secret "secret_abc-123"', (server_dir / "start-public.sh").read_text(encoding="utf-8"))
+
+
+class TestServerIcon(unittest.TestCase):
+    """Optional server-icon.png in the Full wizard: validation + copying."""
+
+    def _png(self, w: int, h: int) -> bytes:
+        return (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR"
+                + w.to_bytes(4, "big") + h.to_bytes(4, "big") + b"\x00" * 30)
+
+    def _copy(self, path: Path | None, server_dir: Path | None = None):
+        from blizzards_installer.wizard import _copy_server_icon
+        server_dir = server_dir or Path(tempfile.mkdtemp(prefix="icon_"))
+        calls = iter([str(path) + "\n"])
+        with patch("blizzards_installer.wizard.ask_yes_no", return_value=True), \
+                patch("blizzards_installer.wizard.ask_text", side_effect=lambda *a: next(calls).strip()), \
+                patch("blizzards_installer.wizard.ok"), \
+                patch("blizzards_installer.wizard.warn") as warn:
+            _copy_server_icon(server_dir)
+        return server_dir, warn
+
+    def test_valid_64x64_icon_copied_verbatim(self):
+        src = Path(tempfile.mkdtemp()) / "icon.png"
+        src.write_bytes(self._png(64, 64))
+        server_dir, warn = self._copy(src)
+        self.assertEqual((server_dir / "server-icon.png").read_bytes(), src.read_bytes())
+        warn.assert_not_called()
+
+    def test_non_png_rejected(self):
+        src = Path(tempfile.mkdtemp()) / "fake.png"
+        src.write_bytes(b"this is definitely not a png")
+        server_dir, warn = self._copy(src)
+        self.assertFalse((server_dir / "server-icon.png").exists())
+        self.assertIn("not a valid PNG", str(warn.call_args))
+
+    def test_corrupt_png_header_rejected(self):
+        src = Path(tempfile.mkdtemp()) / "cut.png"
+        src.write_bytes(self._png(64, 64)[:18])  # IHDR truncated
+        server_dir, warn = self._copy(src)
+        self.assertFalse((server_dir / "server-icon.png").exists())
+
+    def test_missing_file_warns_and_continues(self):
+        server_dir, warn = self._copy(Path(tempfile.mkdtemp()) / "missing.png")
+        self.assertFalse((server_dir / "server-icon.png").exists())
+        self.assertIn("Could not read", str(warn.call_args))
+
+    def test_wrong_size_warns_but_still_copies(self):
+        src = Path(tempfile.mkdtemp()) / "big.png"
+        src.write_bytes(self._png(128, 128))
+        server_dir, warn = self._copy(src)
+        self.assertTrue((server_dir / "server-icon.png").exists())
+        self.assertIn("128x128", str(warn.call_args))
+
+    def test_oversized_file_rejected(self):
+        src = Path(tempfile.mkdtemp()) / "huge.png"
+        src.write_bytes(self._png(64, 64) + b"\x00" * (2 * 1024 * 1024))
+        server_dir, warn = self._copy(src)
+        self.assertFalse((server_dir / "server-icon.png").exists())
+        self.assertIn("2 MB", str(warn.call_args))
+
+    def test_declined_skips_everything(self):
+        server_dir = Path(tempfile.mkdtemp(prefix="icon_"))
+        from blizzards_installer.wizard import _copy_server_icon
+        with patch("blizzards_installer.wizard.ask_yes_no", return_value=False), \
+                patch("blizzards_installer.wizard.ask_text") as text:
+            _copy_server_icon(server_dir)
+        text.assert_not_called()
+        self.assertFalse((server_dir / "server-icon.png").exists())
+
+    def test_full_wizard_with_icon_lands_server_icon_png(self):
+        # Real wizard run: icon prompt answered yes, then a path to a valid PNG.
+        from blizzards_installer.wizard import run_wizard
+        src = Path(tempfile.mkdtemp()) / "icon.png"
+        src.write_bytes(self._png(64, 64))
+        server_dir = Path(tempfile.mkdtemp()) / "server"
+        answers = ["\n"] * 48
+        answers[0] = "2\n"  # Full setup
+        answers[3] = str(server_dir) + "\n"
+        answers[43] = "y\n"  # use a custom server icon
+        answers[44] = str(src) + "\n"
+
+        def fake_get_json(url, params=None):
+            if "piston-meta" in url:
+                return {"versions": [{"id": "1.21.4", "type": "release"}]}
+            if "mcjars" in url or "fill.papermc" in url:
+                return {"builds": [{"buildNumber": 1, "downloads": {"SERVER": {"url": "https://cdn.example/paper-1.21.4.jar"}}}]}
+            if "api.modrinth.com" in url:
+                slug = url.split("/project/")[1].split("/")[0]
+                return [{"version_type": "release", "date_published": "2024-06-01T00:00:00Z",
+                         "files": [{"primary": True, "url": f"https://cdn.example/{slug}.jar", "filename": f"{slug}.jar"}]}]
+            raise AssertionError(f"unexpected URL: {url}")
+
+        def fake_download(url, dest, label):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"fake jar")
+
+        def fake_bootstrap(dir_path, jar_path):
+            TestApplyGameplayConfig._write_fixture_configs(dir_path)
+            return True
+
+        calls = iter(answers)
+        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
+                patch("blizzards_installer.net.http_get_json", side_effect=fake_get_json), \
+                patch("blizzards_installer.net.download_file", side_effect=fake_download), \
+                patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap):
+            run_wizard()
+        self.assertEqual((server_dir / "server-icon.png").read_bytes(), src.read_bytes())
 
 
 if __name__ == "__main__":

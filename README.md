@@ -29,6 +29,9 @@ What it does:
 - Asks for a server name (or lets you hit Enter for a default). When TAB is
   installed, the name is shown at the top of the tablist in Minecraft "small
   font" (Unicode small caps, e.g. ᴍʏ ꜱᴇʀᴠᴇʀ) in a color of your choice.
+- Full setup can copy your own `server-icon.png` into the install (any PNG;
+  64x64 is what the server list displays, and you'll get a warning for other
+  sizes), so the server shows a real image in the multiplayer list.
 - Starts the server once so Paper generates its own default config files, then
   patches only the settings you answered for. This is safer than writing a
   full paper-global.yml by hand, since the config schema changes between
@@ -102,6 +105,7 @@ A server folder containing:
   player count; SimpleTPA and SimpleHomes get pinned default configs (byte-
   exact copies of what the plugin ships, so behavior can't drift when the
   plugin updates)
+- `server-icon.png`, only when you provided one in Full setup
 - `start.bat` / `start.sh` (Aikar's flags) plus `stop`, `restart` and
   `backup` helper scripts
 - `blizzards-installer.json` - a small manifest recording the install, used
@@ -194,6 +198,9 @@ Shipped:
 - **Re-run to update.** Running the installer into an existing server folder
   refreshes the jar and plugins while keeping worlds and configs - both in
   the wizard's Update mode and via the CLI `--dir`.
+- **Optional server icon.** Full setup can copy your own `server-icon.png`
+  (any valid PNG; 64x64 recommended) so the server shows a real image in
+  the multiplayer server list.
 
 Next up:
 
@@ -208,8 +215,6 @@ Later:
 Ideas:
 
 - Crash auto-restart for the server process.
-- Optional server icon: copy a `server-icon.png` into the install so the
-  server shows a real image in the server list.
 - Have the start scripts print the public playit.gg address once the tunnel
   is up (open question in `docs/public-servers.md`).
 
