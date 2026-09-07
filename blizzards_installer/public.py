@@ -167,6 +167,26 @@ def _read_secret(server_dir: Path) -> Optional[str]:
     return path.read_text(encoding="utf-8").strip() or None
 
 
+def _win_tunnel_poll() -> str:
+    """One PowerShell one-liner: wait (up to PLAYIT_MAX_WAIT seconds, default
+    30) for the playit.gg address to appear in playit/agent.log, then print it.
+    Best effort - the address is also visible in the agent window and on the
+    playit dashboard. Single quotes only, so it nests inside a .bat line."""
+    return (
+        "$n = 30; if ($env:PLAYIT_MAX_WAIT) { $n = [int]$env:PLAYIT_MAX_WAIT }; "
+        "$addr = ''; "
+        "for ($i = 0; $i -lt $n -and -not $addr; $i++) { "
+        "Start-Sleep 1; "
+        "$m = Select-String -Path 'playit\\agent.log' -Pattern "
+        "'[a-z0-9-]+\\.playit\\.gg(:[0-9]+)?' -ErrorAction SilentlyContinue "
+        "| Select-Object -First 1; "
+        "if ($m) { $addr = $m.Matches[0].Value } }; "
+        "if ($addr) { Write-Host ('Tunnel is up - players can join at: ' + $addr) } "
+        "else { Write-Host 'Tunnel address not found yet - check the playit "
+        "window or the playit dashboard.' }"
+    )
+
+
 def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     """Write start-public.bat/sh (agent + server) and PUBLIC_SERVER.txt.
 
@@ -183,7 +203,12 @@ def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     (server_dir / "start-public.bat").write_text(
         "@echo off\r\n"
         "setlocal\r\n"
-        f'start "Blizzards Server - playit tunnel" "{agent}"{secret_arg}\r\n'
+        "REM Starts the playit.gg agent in its own window (logging to\r\n"
+        "REM playit\\agent.log) and then the server. Waits up to 30s for the\r\n"
+        "REM tunnel address and prints it; it is also in the agent window and\r\n"
+        "REM on the playit dashboard.\r\n"
+        f'start "Blizzards Server - playit tunnel" cmd /c ""{agent}"{secret_arg} > playit\\agent.log 2>&1"\r\n'
+        f'powershell -NoProfile -Command "{_win_tunnel_poll()}"\r\n'
         f"java {flags} -jar \"{jar_name}\" --nogui\r\n"
         + "pause\r\n",
         encoding="utf-8",
@@ -192,8 +217,23 @@ def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     sh = server_dir / "start-public.sh"
     sh.write_text(
         "#!/usr/bin/env bash\n"
-        "cd \"$(dirname \"$0\")\"\n"
-        f'("./playit/{agent_name}"{secret_arg} &)\n'
+        "# Starts the playit.gg agent in the background (logging to\n"
+        "# playit/agent.log), waits for the tunnel address and prints it, then\n"
+        "# starts the server. Best effort: the address is also on the playit\n"
+        "# dashboard if it does not show up here.\n"
+        'cd "$(dirname "$0")"\n'
+        f'("./playit/{agent_name}"{secret_arg} > playit/agent.log 2>&1 &)\n'
+        "echo 'Waiting for the playit.gg tunnel address...'\n"
+        'addr=""; for i in $(seq 1 "${PLAYIT_MAX_WAIT:-30}"); do\n'
+        "  addr=$(grep -oE '[a-z0-9-]+\\.playit\\.gg(:[0-9]+)?' playit/agent.log 2>/dev/null | head -n1)\n"
+        '  [ -n "$addr" ] && break\n'
+        "  sleep 1\n"
+        "done\n"
+        'if [ -n "$addr" ]; then\n'
+        '  echo "Tunnel is up - players can join at: $addr"\n'
+        "else\n"
+        "  echo 'Tunnel address not found yet - check playit/agent.log or the playit dashboard.'\n"
+        "fi\n"
         f'java {flags} -jar "{jar_name}" --nogui\n',
         encoding="utf-8",
     )
@@ -231,6 +271,9 @@ def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
         "     address; players add it in Minecraft's multiplayer screen.\n"
         "\n"
         "Notes:\n"
+        "  - start-public prints the public address once the tunnel is up (it\n"
+        "    waits up to 30 seconds for it); the address is also written to\n"
+        "    playit/agent.log and shown on the playit dashboard.\n"
         "  - The agent and the server must both keep running while you play.\n"
         "  - Anyone with the address can try to join: consider enabling the\n"
         "    whitelist in server.properties if the server is not just for friends.\n"

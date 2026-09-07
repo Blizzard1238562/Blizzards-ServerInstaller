@@ -208,6 +208,10 @@ Shipped:
 - **Crash auto-restart.** The start scripts relaunch the server 5 s after a
   crash; a deliberate stop (in-game `stop` or the stop/restart scripts,
   which set a `.stop-requested` marker) never restarts.
+- **Public address on start.** `start-public.bat`/`start-public.sh` wait
+  for the playit.gg tunnel to come up and print the address players should
+  join (best effort; it is also in `playit/agent.log` and the playit
+  dashboard).
 
 Next up:
 
@@ -219,10 +223,7 @@ Later:
   their layouts.
 - A simple GUI around the wizard.
 
-Ideas:
 
-- Have the start scripts print the public playit.gg address once the tunnel
-  is up (open question in `docs/public-servers.md`).
 
 ## Known limitations
 

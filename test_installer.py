@@ -935,6 +935,58 @@ class TestPublicIntegration(unittest.TestCase):
         finally:
             shutil.rmtree(server_dir, ignore_errors=True)
 
+    def test_start_public_scripts_display_tunnel_address(self):
+        server_dir = Path(tempfile.mkdtemp())
+        try:
+            playit_dir = server_dir / "playit"
+            playit_dir.mkdir()
+            (playit_dir / "playit-linux-amd64").write_bytes(b"agent")
+            write_public_files(server_dir, "paper-1.21.4.jar", 2048)
+            sh = (server_dir / "start-public.sh").read_text(encoding="utf-8")
+            self.assertIn("playit/agent.log", sh)
+            self.assertIn("Tunnel is up", sh)
+            self.assertIn("PLAYIT_MAX_WAIT", sh)
+            self.assertIn("grep -oE", sh)
+            bat = (server_dir / "start-public.bat").read_text(encoding="utf-8")
+            self.assertIn("playit\\agent.log", bat)
+            self.assertIn("Tunnel is up", bat)
+            self.assertIn("PLAYIT_MAX_WAIT", bat)
+            self.assertIn("Select-String", bat)
+        finally:
+            shutil.rmtree(server_dir, ignore_errors=True)
+
+    @unittest.skipUnless(sys.platform == "win32" and shutil.which("powershell"), "requires PowerShell on Windows")
+    def test_win_tunnel_poll_prints_address_from_log(self):
+        from blizzards_installer.public import _win_tunnel_poll
+        server_dir = Path(tempfile.mkdtemp())
+        try:
+            (server_dir / "playit").mkdir()
+            (server_dir / "playit" / "agent.log").write_text(
+                "INFO playit-cli: url: abc123.playit.gg:25565\n", encoding="utf-8")
+            env = dict(os.environ, PLAYIT_MAX_WAIT="2")
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", _win_tunnel_poll()],
+                               cwd=str(server_dir), env=env, capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("abc123.playit.gg:25565", r.stdout)
+        finally:
+            shutil.rmtree(server_dir, ignore_errors=True)
+
+    @unittest.skipUnless(sys.platform == "win32" and shutil.which("powershell"), "requires PowerShell on Windows")
+    def test_win_tunnel_poll_not_found_prints_hint(self):
+        from blizzards_installer.public import _win_tunnel_poll
+        server_dir = Path(tempfile.mkdtemp())
+        try:
+            (server_dir / "playit").mkdir()
+            (server_dir / "playit" / "agent.log").write_text(
+                "just some agent chatter without an address\n", encoding="utf-8")
+            env = dict(os.environ, PLAYIT_MAX_WAIT="1")
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", _win_tunnel_poll()],
+                               cwd=str(server_dir), env=env, capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("not found yet", r.stdout)
+        finally:
+            shutil.rmtree(server_dir, ignore_errors=True)
+
     def test_write_public_files_with_secret_embeds_key(self):
         server_dir = Path(tempfile.mkdtemp())
         try:
@@ -997,6 +1049,44 @@ class TestPublicIntegration(unittest.TestCase):
         with patch("sys.platform", "linux"):
             self.assertFalse(open_claim_console(Path("/x/playit-linux-amd64")))
         mock_popen.assert_not_called()
+
+
+@unittest.skipUnless(shutil.which("bash") and os.name == "posix", "requires bash on POSIX")
+class TestStartPublicTunnelPosix(unittest.TestCase):
+    """Real-bash runs of start-public.sh: the tunnel address must be grepped
+    out of the agent log and printed before the server starts; a silent
+    agent must fall back to a hint without blocking the server."""
+
+    def _run(self, agent_body: str, max_wait: str):
+        server_dir = Path(tempfile.mkdtemp(prefix="pub_"))
+        playit_dir = server_dir / "playit"
+        playit_dir.mkdir()
+        agent = playit_dir / "playit-linux-amd64"
+        agent.write_text("#!/usr/bin/env bash\n" + agent_body, encoding="utf-8")
+        os.chmod(agent, 0o755)
+        write_public_files(server_dir, "paper-1.21.4.jar", 1024)
+        start = server_dir / "start-public.sh"
+        os.chmod(start, 0o755)
+        fake = Path(tempfile.mkdtemp(prefix="fakejava_"))
+        (fake / "java").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        os.chmod(fake / "java", 0o755)
+        env = dict(os.environ, PATH=str(fake) + os.pathsep + os.environ["PATH"],
+                   PLAYIT_MAX_WAIT=max_wait)
+        r = subprocess.run(["bash", str(start)], env=env, capture_output=True, text=True, timeout=60)
+        return r
+
+    def test_address_found_and_printed_before_server(self):
+        r = self._run("sleep 1\necho 'INFO playit-cli: url: abc123.playit.gg:25565'\nsleep 5\n", "10")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("abc123.playit.gg:25565", r.stdout)
+        self.assertIn("Tunnel is up", r.stdout)
+
+    def test_silent_agent_falls_back_to_hint(self):
+        r = self._run("sleep 5\n", "2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("not found yet", r.stdout)
+        self.assertIn("dashboard", r.stdout)
+        self.assertIn("Waiting for the playit.gg tunnel address", r.stdout)
 
 
 class TestTabConfig(unittest.TestCase):

@@ -129,9 +129,11 @@ written, install completed).
   window covers users without an account.
 - Tunnel creation stays a dashboard step: playit exposes no public API for it
   and acting on the user's account would be a consent problem anyway.
-- Whether the agent can report its assigned public address to stdout (so a
-  launcher could print "share this address" instead of pointing at the
-  dashboard).
+- The agent does print its assigned address to its console output; the
+  launchers now capture it (agent log + grep / Select-String) and print
+  "players can join at: <address>" once the tunnel is up, with a
+  dashboard/agent-window fallback when the address does not appear in time.
+  This is best effort - the log format could change between agent versions.
 - macOS: find where playit publishes macOS agents (site download only?) and
   add support.
 - Check playit's terms for bundling/automating agent setup before scaling the
