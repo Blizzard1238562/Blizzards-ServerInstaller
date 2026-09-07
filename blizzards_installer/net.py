@@ -11,6 +11,7 @@ import encodings.idna  # noqa: F401  # http.client IDNA-encodes hostnames even f
 import gzip
 import json
 import ssl
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -90,30 +91,49 @@ def http_get_json_optional(url: str, params: dict | None = None):
         raise
 
 
+def _progress_readout(label: str, written: int, total: int, start: float) -> None:
+    """Live download status on one \r line: progress bar + percent + size +
+    speed + ETA when the server sent a Content-Length, otherwise a spinning
+    byte counter. ASCII only, so old cmd.exe renders it fine."""
+    elapsed = max(time.monotonic() - start, 1e-9)
+    if total:
+        width = 24
+        pct = min(written * 100 // total, 100)
+        bar = "#" * (pct * width // 100)
+        speed = written / elapsed / 1048576
+        eta = (total - written) / (written / elapsed)
+        print(
+            f"\r      downloading {label}... [{bar:<{width}}] {pct:3d}% "
+            f"{written / 1048576:6.1f}/{total / 1048576:5.1f} MB "
+            f"{speed:4.1f} MB/s {eta:4.0f}s left",
+            end="",
+            flush=True,
+        )
+    else:
+        frame = "|/-\\"[(written // DOWNLOAD_CHUNK) % 4]
+        print(f"\r      {frame} downloading {label}... {written / 1048576:.1f} MB", end="", flush=True)
+
+
 def download_file(url: str, dest: Path, label: str) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     with _open(url) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         gzip_body = resp.headers.get("Content-Encoding", "").lower() == "gzip"
         tmp = dest.with_suffix(dest.suffix + ".part")
+        start = time.monotonic()
         with open(tmp, "wb") as f:
-            written = 0
             if gzip_body:
                 # We don't ask for gzip, but if a server sends it anyway, buffer
                 # the compressed body and undo it once (rare path).
                 f.write(gzip.decompress(resp.read()))
             else:
+                written = 0
                 while True:
                     chunk = resp.read(DOWNLOAD_CHUNK)
                     if not chunk:
                         break
                     f.write(chunk)
                     written += len(chunk)
-                    if total:
-                        pct = written * 100 // total
-                        readout = f"{pct:3d}%"
-                    else:
-                        readout = f"{written // 1024} KB"
-                    print(f"\r      downloading {label}... {readout}", end="", flush=True)
+                    _progress_readout(label, written, total, start)
         print()
         tmp.replace(dest)
