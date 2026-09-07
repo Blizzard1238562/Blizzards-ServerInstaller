@@ -114,15 +114,24 @@ def ask_text(question: str, default: Optional[str] = None) -> str:
     return raw or default or ""
 
 
-def ask_int(question: str, default: int) -> int:
+def ask_int(question: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    """Whole-number prompt. Optional minimum/maximum bounds reject nonsense
+    values (e.g. negative RAM) by re-asking."""
     while True:
         raw = input(f"  ? {question} [{default}]: ").strip()
         if not raw:
             return default
         try:
-            return int(raw)
+            value = int(raw)
         except ValueError:
             print("    Please enter a whole number.")
+            continue
+        if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
+            lo = minimum if minimum is not None else "any"
+            hi = maximum if maximum is not None else "any"
+            print(f"    Please enter a value between {lo} and {hi}.")
+            continue
+        return value
 
 
 def ask_choice(question: str, options: list[str], default_index: int = 0) -> int:

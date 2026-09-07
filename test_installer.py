@@ -1415,6 +1415,49 @@ class TestWizardEndToEnd(unittest.TestCase):
         self.assertIn("white-list=true", props)
 
 
+class TestInputValidation(unittest.TestCase):
+    def test_version_charset_accepts_real_version_shapes(self):
+        from blizzards_installer.versions import is_valid_mc_version
+
+        for good in ("1.21.4", "1.20.1-pre2", "23w14a", "b1.7.3", "1.7.10", "1.21.4-rc1"):
+            self.assertTrue(is_valid_mc_version(good), good)
+
+    def test_version_charset_rejects_unsafe_and_garbage(self):
+        from blizzards_installer.versions import is_valid_mc_version
+
+        for bad in ("", "1.21.4 & calc", "1.21; rm -rf /", "1.2.1.4 ", "v1.21.4", "1.21.4.x" * 10, "a b", "1.21.4\""):
+            self.assertFalse(is_valid_mc_version(bad), bad)
+
+    def test_manual_version_reprompts_on_garbage(self):
+        from blizzards_installer.versions import ask_manual_version
+
+        with patch("blizzards_installer.versions.ask_text", side_effect=["1.21.4 & calc", "1.21.4"]) as mock_text, \
+                patch("blizzards_installer.versions.warn") as mock_warn:
+            self.assertEqual(ask_manual_version(), "1.21.4")
+        self.assertEqual(mock_text.call_count, 2)
+        mock_warn.assert_called_once()
+
+    def test_ask_int_enforces_bounds(self):
+        from blizzards_installer import ui
+
+        def feed(seq):
+            calls = iter(seq)
+            with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)):
+                return ui.ask_int("RAM?", 4096, minimum=256, maximum=65536)
+
+        self.assertEqual(feed(["-3\n", "512\n"]), 512)
+        self.assertEqual(feed(["999999999\n", "4096\n"]), 4096)
+        self.assertEqual(feed(["2048\n"]), 2048)
+        self.assertEqual(feed(["\n"]), 4096)  # blank -> default, bounds not enforced on default
+
+    def test_unattended_ram_out_of_range_raises(self):
+        from blizzards_installer.wizard import run_quick_unattended
+
+        for bad in (0, -1024, 100, 70000):
+            with self.assertRaises(RuntimeError):
+                run_quick_unattended(ram_mb=bad)
+
+
 class _LocalHTTPServer:
     """A tiny threaded HTTP server so the real urllib path (no mocks) can
     be exercised against localhost: downloads, JSON GETs, gzip, 404s and

@@ -40,10 +40,15 @@ from .scripts import write_start_scripts
 from .serverjar import SERVER_TYPES, download_server_jar
 from .sysinfo import recommended_ram_mb
 from .ui import ask_choice, ask_int, ask_text, ask_yes_no, error, info, ok, section, warn
-from .versions import choose_minecraft_version, get_recent_release_versions
+from .versions import ask_manual_version, choose_minecraft_version, get_recent_release_versions
 
 DIFFICULTIES = ["peaceful", "easy", "normal", "hard"]
 GAMEMODES = ["survival", "creative", "adventure", "spectator"]
+
+# RAM sanity bounds for the start-script JVM flags: below 256 MB modern Paper
+# won't start, and more than 64 GB in one server is a typo, not a choice.
+MIN_RAM_MB = 256
+MAX_RAM_MB = 65536
 
 # (label, legacy color code) for the TAB tablist header. Empty code = plain
 # white, i.e. no color prefix.
@@ -156,7 +161,7 @@ def _latest_release_or_manual() -> str:
             return recent[0]
     except Exception as exc:
         warn(f"Could not reach Mojang's version list ({exc}).")
-    return ask_text("Enter the Minecraft version (e.g. 1.21.4)")
+    return ask_manual_version()
 
 
 def run_quick_wizard() -> None:
@@ -174,7 +179,7 @@ def run_quick_wizard() -> None:
     server_dir = _choose_install_dir()
     if server_dir is None:
         return
-    ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", recommended_ram_mb())
+    ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", recommended_ram_mb(), MIN_RAM_MB, MAX_RAM_MB)
     mc_version = _latest_release_or_manual()
     _quick_install(server_name, server_dir, ram_mb, mc_version)
 
@@ -203,6 +208,8 @@ def run_quick_unattended(
         update_existing_server(target, manifest)
         return
     name = server_name or "Minecraft Server"
+    if ram_mb is not None and not (MIN_RAM_MB <= ram_mb <= MAX_RAM_MB):
+        raise RuntimeError(f"RAM must be between {MIN_RAM_MB} and {MAX_RAM_MB} MB (got {ram_mb}).")
     ram = ram_mb or recommended_ram_mb()
     try:
         recent = get_recent_release_versions(limit=1)
@@ -510,7 +517,7 @@ def run_full_wizard() -> None:
     selected_ids = resolve_dependencies(selected_ids, plugins_by_id)
     chosen_plugins = [p for p in plugins if p["id"] in selected_ids]
 
-    ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", recommended_ram_mb())
+    ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", recommended_ram_mb(), MIN_RAM_MB, MAX_RAM_MB)
 
     whitelist_label = (", ".join(e["name"] for e in whitelist_entries) or "enabled (no names added yet)") if whitelist else "disabled"
     ops_label = (", ".join(e["name"] for e in op_entries) or "enabled (no names added yet)") if operators else "none"
