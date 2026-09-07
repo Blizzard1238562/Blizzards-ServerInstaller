@@ -72,27 +72,22 @@ def _win_backup() -> str:
     )
 
 
+def _chmod(path: Path, mode: int) -> None:
+    try:
+        os.chmod(path, mode)
+    except Exception:
+        pass
+
+
 def write_start_scripts(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     flags = _aikars_flags(ram_mb)
 
     bat = server_dir / "start.bat"
-    bat.write_text(
-        "@echo off\r\n"
-        f"java {flags} -jar \"{jar_name}\" --nogui\r\n"
-        "pause\r\n",
-        encoding="utf-8",
-    )
+    bat.write_text("@echo off\r\n" f"java {flags} -jar \"{jar_name}\" --nogui\r\n" "pause\r\n", encoding="utf-8")
 
     sh = server_dir / "start.sh"
-    sh.write_text(
-        "#!/usr/bin/env bash\n"
-        f'java {flags} -jar "{jar_name}" --nogui\n',
-        encoding="utf-8",
-    )
-    try:
-        os.chmod(sh, 0o755)
-    except Exception:
-        pass
+    sh.write_text("#!/usr/bin/env bash\n" f'java {flags} -jar "{jar_name}" --nogui\n', encoding="utf-8")
+    _chmod(sh, 0o755)
 
     write_management_scripts(server_dir, jar_name)
     ok("Wrote start.bat/start.sh plus stop, restart and backup helper scripts")
@@ -102,8 +97,7 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
     """Write stop/restart/backup scripts next to start.bat/start.sh.
 
     The scripts are regenerated per server because they need the exact jar
-    name to target only this server's java process.
-    """
+    name to target only this server's java process."""
     sh = server_dir / "stop.sh"
     sh.write_text(
         "#!/usr/bin/env bash\n"
@@ -111,25 +105,13 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
         "# with this server's jar is stopped - other Java programs are left\n"
         "# alone. Sends a normal stop signal (the JVM shuts down and saves),\n"
         "# escalating to a hard kill after 30 seconds.\n"
-        'cd "$(dirname "$0")"\n'
-        f'pat="{_pcre_escape(jar_name)}"\n'
-        'if ! pgrep -f "$pat" >/dev/null 2>&1; then\n'
-        '  echo "Server is not running."\n'
-        "  exit 0\n"
-        "fi\n"
-        'echo "Stopping the server..."\n'
-        'pkill -f "$pat"\n'
-        "i=0\n"
-        "while [ $i -lt 30 ]; do\n"
-        '  if ! pgrep -f "$pat" >/dev/null 2>&1; then\n'
-        '    echo "Server stopped."\n'
-        "    exit 0\n"
-        "  fi\n"
-        "  sleep 1\n"
-        "  i=$((i + 1))\n"
-        "done\n"
-        'echo "Server did not stop in 30s - forcing."\n'
-        'pkill -9 -f "$pat"\n',
+        'cd "$(dirname "$0")"\n' f'pat="{_pcre_escape(jar_name)}"\n'
+        'if ! pgrep -f "$pat" >/dev/null 2>&1; then\n' '  echo "Server is not running."\n' "  exit 0\n" "fi\n"
+        'echo "Stopping the server..."\n' 'pkill -f "$pat"\n'
+        "i=0\n" "while [ $i -lt 30 ]; do\n"
+        '  if ! pgrep -f "$pat" >/dev/null 2>&1; then\n' '    echo "Server stopped."\n' "    exit 0\n" "  fi\n"
+        "  sleep 1\n" "  i=$((i + 1))\n" "done\n"
+        'echo "Server did not stop in 30s - forcing."\n' 'pkill -9 -f "$pat"\n',
         encoding="utf-8",
     )
 
@@ -138,10 +120,7 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
         "#!/usr/bin/env bash\n"
         "# Restarts this server: stops the running instance (if any), waits\n"
         "# two seconds, then starts the server again in this terminal.\n"
-        'cd "$(dirname "$0")"\n'
-        './stop.sh\n'
-        "sleep 2\n"
-        "exec ./start.sh\n",
+        'cd "$(dirname "$0")"\n' "./stop.sh\n" "sleep 2\n" "exec ./start.sh\n",
         encoding="utf-8",
     )
 
@@ -151,26 +130,19 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
         "# Backs up the worlds and plugins folders into backups/ as a\n"
         "# timestamped tar.gz. Stop the server first for a fully consistent\n"
         "# backup.\n"
-        'cd "$(dirname "$0")"\n'
-        "mkdir -p backups\n"
-        'stamp=$(date +%Y-%m-%d_%H-%M-%S)\n'
-        "targets=()\n"
+        'cd "$(dirname "$0")"\n' "mkdir -p backups\n"
+        'stamp=$(date +%Y-%m-%d_%H-%M-%S)\n' "targets=()\n"
         "for d in world world_nether world_the_end plugins; do\n"
         '  [ -d "$d" ] && targets+=("$d")\n'
         "done\n"
         "if [ ${#targets[@]} -eq 0 ]; then\n"
-        '  echo "Nothing to back up yet - start the server once first."\n'
-        "  exit 0\n"
-        "fi\n"
+        '  echo "Nothing to back up yet - start the server once first."\n' "  exit 0\n" "fi\n"
         'tar -czf "backups/backup-${stamp}.tar.gz" "${targets[@]}"\n'
         'echo "Backup written: backups/backup-${stamp}.tar.gz"\n',
         encoding="utf-8",
     )
     for script in (sh, restart_sh, backup_sh):
-        try:
-            os.chmod(script, 0o755)
-        except Exception:
-            pass
+        _chmod(script, 0o755)
 
     (server_dir / "stop.bat").write_text(
         _bat(
@@ -209,4 +181,4 @@ def write_management_scripts(server_dir: Path, jar_name: str) -> None:
             "pause",
         ),
         encoding="utf-8",
-    )
+    )

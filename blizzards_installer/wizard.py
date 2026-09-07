@@ -15,8 +15,10 @@ import re
 import uuid
 from pathlib import Path
 
+from . import net
 from .config import (
     UNSUPPORTED_SETTINGS,
+    _property_value,
     apply_gameplay_config,
     offline_player_uuid,
     write_eula,
@@ -24,7 +26,6 @@ from .config import (
     write_server_properties,
     write_whitelist,
 )
-from . import net
 from .manifest import MANIFEST_NAME, read_manifest, touch_manifest, write_manifest
 from .plugins import (
     install_plugins,
@@ -68,6 +69,54 @@ MODE_LABELS = [
 # enforce the character set and upper length so clearly-invalid input is
 # rejected before it reaches the profile API or warning text.
 MINECRAFT_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
+
+
+def _summary(rows: list[tuple[str, str]]) -> None:
+    section("Summary")
+    for key, value in rows:
+        print(f"  {key:<16}: {value}")
+
+
+def _has_tab(chosen_plugins: list[dict]) -> bool:
+    return any(p["id"] == "tab" for p in chosen_plugins)
+
+
+def _install_plugins_step(
+    server_dir: Path,
+    chosen_plugins: list[dict],
+    mc_version: str,
+    loader: str,
+    server_name: str,
+    name_color: str,
+) -> None:
+    plugins_dir = server_dir / "plugins"
+    plugins_dir.mkdir(exist_ok=True)
+    if chosen_plugins:
+        install_plugins(chosen_plugins, mc_version, loader, plugins_dir)
+    if _has_tab(chosen_plugins):
+        write_tab_config(server_dir, server_name, name_color)
+    write_plugin_presets(server_dir, chosen_plugins)
+
+
+def _scripts_and_manifest(
+    server_dir: Path,
+    jar_name: str,
+    ram_mb: int,
+    server_type: str,
+    mc_version: str,
+    plugin_ids: list[str],
+) -> None:
+    section("Start scripts")
+    write_start_scripts(server_dir, jar_name, ram_mb)
+    write_manifest(server_dir, server_type=server_type, mc_version=mc_version, ram_mb=ram_mb, plugin_ids=plugin_ids)
+
+
+def _done_message(server_dir: Path, chosen_plugins: list[dict]) -> None:
+    section("Done")
+    ok(f"Server installed at: {server_dir}")
+    info("Run start.bat (Windows) or ./start.sh (Linux/Mac) inside that folder to launch it.")
+    if _has_tab(chosen_plugins):
+        info("TAB tablist set to your server name - edit plugins/TAB/config.yml to tweak it (then /tab reload).")
 
 
 def run_wizard() -> None:
@@ -168,20 +217,19 @@ def run_quick_unattended(
 def _quick_install(server_name: str, server_dir: Path, ram_mb: int, mc_version: str) -> None:
     """Install latest Paper + the essential plugins. No prompts; the caller
     decides on name/folder/RAM/version."""
-    plugins, _categories = load_plugin_registry()
+    plugins, _ = load_plugin_registry()
     plugins_by_id = {p["id"]: p for p in plugins}
-    essential_ids = {p["id"] for p in plugins if p.get("essential")}
-    essential_ids = resolve_dependencies(essential_ids, plugins_by_id)
+    essential_ids = resolve_dependencies({p["id"] for p in plugins if p.get("essential")}, plugins_by_id)
     chosen_plugins = [p for p in plugins if p["id"] in essential_ids]
-    chosen_has_tab = any(p["id"] == "tab" for p in chosen_plugins)
 
-    section("Summary")
-    print(f"  Server software : {SERVER_TYPES['paper']['label']}")
-    print(f"  Server name     : {server_name}")
-    print(f"  MC version      : {mc_version}")
-    print(f"  Install dir     : {server_dir}")
-    print(f"  RAM             : {ram_mb} MB")
-    print(f"  Plugins         : {', '.join(p['name'] for p in chosen_plugins)}")
+    _summary([
+        ("Server software", SERVER_TYPES["paper"]["label"]),
+        ("Server name", server_name),
+        ("MC version", mc_version),
+        ("Install dir", str(server_dir)),
+        ("RAM", f"{ram_mb} MB"),
+        ("Plugins", ", ".join(p["name"] for p in chosen_plugins)),
+    ])
 
     section("Downloading server jar")
     jar_name = f"paper-{mc_version}.jar"
@@ -193,28 +241,9 @@ def _quick_install(server_name: str, server_dir: Path, ram_mb: int, mc_version: 
     write_server_properties(server_dir, {"motd": server_name})
     ok("Wrote eula.txt and server.properties (MOTD is your server name)")
 
-    plugins_dir = server_dir / "plugins"
-    plugins_dir.mkdir(exist_ok=True)
-    install_plugins(chosen_plugins, mc_version, SERVER_TYPES["paper"]["modrinth_loader"], plugins_dir)
-    if chosen_has_tab:
-        write_tab_config(server_dir, server_name, "")
-    write_plugin_presets(server_dir, chosen_plugins)
-
-    section("Start scripts")
-    write_start_scripts(server_dir, jar_name, ram_mb)
-    write_manifest(
-        server_dir,
-        server_type="paper",
-        mc_version=mc_version,
-        ram_mb=ram_mb,
-        plugin_ids=[p["id"] for p in chosen_plugins],
-    )
-
-    section("Done")
-    ok(f"Server installed at: {server_dir}")
-    info("Run start.bat (Windows) or ./start.sh (Linux/Mac) inside that folder to launch it.")
-    if chosen_has_tab:
-        info("TAB tablist set to your server name - edit plugins/TAB/config.yml to tweak it (then /tab reload).")
+    _install_plugins_step(server_dir, chosen_plugins, mc_version, SERVER_TYPES["paper"]["modrinth_loader"], server_name, "")
+    _scripts_and_manifest(server_dir, jar_name, ram_mb, "paper", mc_version, [p["id"] for p in chosen_plugins])
+    _done_message(server_dir, chosen_plugins)
 
 
 def run_update_wizard() -> None:
@@ -237,15 +266,18 @@ def run_update_wizard() -> None:
         error("The install manifest in that folder is incomplete - install a fresh server instead.")
         return
     plugin_ids = manifest.get("plugins") or []
-    plugins, _categories = load_plugin_registry()
+    plugins, _ = load_plugin_registry()
     by_id = {p["id"]: p for p in plugins}
     known = [by_id[i] for i in plugin_ids if i in by_id]
 
     section("Found an existing server")
-    print(f"  Server software : {server['label']}")
-    print(f"  MC version      : {mc_version}")
-    print(f"  Plugins         : {', '.join(p['name'] for p in known) or '(none recorded)'}")
-    print(f"  Server folder   : {server_dir}")
+    for key, value in (
+        ("Server software", server["label"]),
+        ("MC version", mc_version),
+        ("Plugins", ", ".join(p["name"] for p in known) or "(none recorded)"),
+        ("Server folder", str(server_dir)),
+    ):
+        print(f"  {key:<16}: {value}")
     if not ask_yes_no(
         f"Refresh the {server['label']} {mc_version} server jar and its plugins to the newest "
         "builds? Your world, configs and start scripts will be kept.",
@@ -272,7 +304,7 @@ def update_existing_server(server_dir: Path, manifest: dict) -> None:
                            "install a fresh server instead (Quick start / Full setup).")
     server = SERVER_TYPES[server_type]
 
-    plugins, _categories = load_plugin_registry()
+    plugins, _ = load_plugin_registry()
     by_id = {p["id"]: p for p in plugins}
     known = [by_id[i] for i in plugin_ids if i in by_id]
     stale = [str(i) for i in plugin_ids if i not in by_id]
@@ -311,8 +343,7 @@ def _ask_player_names(prompt: str, online_mode: bool, skip_hint: str, none_warni
     and names that can't be resolved are skipped with a hint for the
     in-game command (`skip_hint`), since a uuid-less entry would silently
     never match."""
-    raw = ask_text(prompt, None)
-    names = [n.strip() for n in raw.split(",") if n.strip()]
+    names = [n.strip() for n in ask_text(prompt, None).split(",") if n.strip()]
     entries: list[dict] = []
     for name in names:
         if not MINECRAFT_NAME_RE.fullmatch(name):
@@ -324,12 +355,10 @@ def _ask_player_names(prompt: str, online_mode: bool, skip_hint: str, none_warni
                 data = net.http_get_json(f"https://api.mojang.com/users/profiles/minecraft/{name}")
                 if not isinstance(data, dict) or not data.get("id"):
                     raise ValueError("no profile id in response")
-                profile_uuid = str(uuid.UUID(data["id"]))
-                canonical = data.get("name", name)
+                entries.append({"uuid": str(uuid.UUID(data["id"])), "name": data.get("name", name)})
             except Exception:
                 warn(f"Could not look up '{name}' on Mojang - add them later with: {skip_hint} {name}")
                 continue
-            entries.append({"uuid": profile_uuid, "name": canonical})
         else:
             entries.append({"uuid": offline_player_uuid(name), "name": name})
     if not entries:
@@ -357,13 +386,6 @@ def _ask_operator_names(online_mode: bool) -> list[dict]:
     )
 
 
-def _property_preview(value) -> str:
-    """Render a property value the way it lands in server.properties."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
-
-
 def _print_config_preview(
     props_overrides: dict,
     whitelist_entries: list[dict],
@@ -376,25 +398,20 @@ def _print_config_preview(
     print("    eula.txt             : eula=true")
     print("    server.properties    :")
     for key in sorted(props_overrides):
-        print(f"      {key}={_property_preview(props_overrides[key])}")
+        print(f"      {key}={_property_value(props_overrides[key])}")
     if whitelist_entries:
-        names = ", ".join(e["name"] for e in whitelist_entries)
-        print(f"    whitelist.json      : {names}")
+        print(f"    whitelist.json      : {', '.join(e['name'] for e in whitelist_entries)}")
     if op_entries:
-        names = ", ".join(e["name"] for e in op_entries)
-        print(f"    ops.json            : {names}")
+        print(f"    ops.json            : {', '.join(e['name'] for e in op_entries)}")
     print("    Paper config files   : patched after a one-time server start")
     print("      (requires Java on PATH; otherwise written to MANUAL_CONFIG_NOTES.txt)")
     for answer_key, yaml_key in UNSUPPORTED_SETTINGS:
         print(f"      paper-global.yml unsupported-settings.{yaml_key}: "
-              f"{_property_preview(answers[answer_key])}")
-    if answers["anti_xray"]:
-        mode = answers["anti_xray_mode"]
-    else:
-        mode = "(disabled)"
+              f"{_property_value(answers[answer_key])}")
+    mode = answers["anti_xray_mode"] if answers["anti_xray"] else "(disabled)"
     print(f"      paper-world-defaults.yml anti-xray: enabled="
-          f"{_property_preview(answers['anti_xray'])}, engine-mode={mode}")
-    print(f"      bukkit.yml settings.allow-end: {_property_preview(answers['allow_end'])}")
+          f"{_property_value(answers['anti_xray'])}, engine-mode={mode}")
+    print(f"      bukkit.yml settings.allow-end: {_property_value(answers['allow_end'])}")
 
 
 def run_full_wizard() -> None:
@@ -449,20 +466,11 @@ def run_full_wizard() -> None:
     allow_end = ask_yes_no("Allow the End?", True)
     enable_command_blocks = ask_yes_no("Enable command blocks?", False)
     props_overrides = {
-        "motd": motd,
-        "max-players": max_players,
-        "difficulty": difficulty,
-        "online-mode": online_mode,
-        "white-list": whitelist,
-        "pvp": pvp,
-        "hardcore": hardcore,
-        "allow-flight": allow_flight,
-        "view-distance": view_distance,
-        "simulation-distance": sim_distance,
-        "level-seed": world_seed,
-        "gamemode": gamemode,
-        "spawn-protection": spawn_protection,
-        "allow-nether": allow_nether,
+        "motd": motd, "max-players": max_players, "difficulty": difficulty,
+        "online-mode": online_mode, "white-list": whitelist, "pvp": pvp,
+        "hardcore": hardcore, "allow-flight": allow_flight, "view-distance": view_distance,
+        "simulation-distance": sim_distance, "level-seed": world_seed, "gamemode": gamemode,
+        "spawn-protection": spawn_protection, "allow-nether": allow_nether,
         "enable-command-block": enable_command_blocks,
     }
 
@@ -501,32 +509,26 @@ def run_full_wizard() -> None:
             selected_ids.add(plugin["id"])
     selected_ids = resolve_dependencies(selected_ids, plugins_by_id)
     chosen_plugins = [p for p in plugins if p["id"] in selected_ids]
-    chosen_has_tab = any(p["id"] == "tab" for p in chosen_plugins)
 
     ram_mb = ask_int("How much RAM (in MB) should the start script allocate?", recommended_ram_mb())
 
-    section("Summary")
-    print(f"  Server software : {server['label']}")
-    print(f"  Server name     : {server_name}")
-    print(f"  MC version      : {mc_version}")
-    print(f"  Install dir     : {server_dir}")
-    print(f"  RAM             : {ram_mb} MB")
-    print(f"  Gamemode        : {gamemode}")
-    print(f"  World seed      : {world_seed or '(random)'}")
-    print(f"  Allow the End   : {allow_end}")
-    if whitelist:
-        whitelist_label = ", ".join(e["name"] for e in whitelist_entries) or "enabled (no names added yet)"
-    else:
-        whitelist_label = "disabled"
-    print(f"  Whitelist       : {whitelist_label}")
-    if operators:
-        ops_label = ", ".join(e["name"] for e in op_entries) or "enabled (no names added yet)"
-    else:
-        ops_label = "none"
-    print(f"  Operators       : {ops_label}")
-    print(f"  Plugins         : {', '.join(p['name'] for p in chosen_plugins) or '(none)'}")
-    print(f"  TNT duplication : {answers['tnt_dupe']}")
-    print(f"  Anti-Xray       : {answers['anti_xray']}" + (f" (mode {answers['anti_xray_mode']})" if answers["anti_xray"] else ""))
+    whitelist_label = (", ".join(e["name"] for e in whitelist_entries) or "enabled (no names added yet)") if whitelist else "disabled"
+    ops_label = (", ".join(e["name"] for e in op_entries) or "enabled (no names added yet)") if operators else "none"
+    _summary([
+        ("Server software", server["label"]),
+        ("Server name", server_name),
+        ("MC version", mc_version),
+        ("Install dir", str(server_dir)),
+        ("RAM", f"{ram_mb} MB"),
+        ("Gamemode", gamemode),
+        ("World seed", world_seed or "(random)"),
+        ("Allow the End", str(allow_end)),
+        ("Whitelist", whitelist_label),
+        ("Operators", ops_label),
+        ("Plugins", ", ".join(p["name"] for p in chosen_plugins) or "(none)"),
+        ("TNT duplication", str(answers["tnt_dupe"])),
+        ("Anti-Xray", str(answers["anti_xray"]) + (f" (mode {answers['anti_xray_mode']})" if answers["anti_xray"] else "")),
+    ])
     if ask_yes_no("Show the exact config changes that will be written before installing?", False):
         _print_config_preview(props_overrides, whitelist_entries, op_entries, answers)
     if not ask_yes_no("Proceed with installation?", True):
@@ -549,26 +551,12 @@ def run_full_wizard() -> None:
         write_ops(server_dir, op_entries)
         ok(f"Wrote ops.json for {', '.join(e['name'] for e in op_entries)}")
 
-    plugins_dir = server_dir / "plugins"
-    plugins_dir.mkdir(exist_ok=True)
-    if chosen_plugins:
-        install_plugins(chosen_plugins, mc_version, server["modrinth_loader"], plugins_dir)
-    if chosen_has_tab:
-        write_tab_config(server_dir, server_name, name_color)
-    write_plugin_presets(server_dir, chosen_plugins)
+    _install_plugins_step(server_dir, chosen_plugins, mc_version, server["modrinth_loader"], server_name, name_color)
 
     section("Generating Paper config")
     apply_gameplay_config(server_dir, jar_path, answers)
 
-    section("Start scripts")
-    write_start_scripts(server_dir, jar_name, ram_mb)
-    write_manifest(
-        server_dir,
-        server_type=server_type,
-        mc_version=mc_version,
-        ram_mb=ram_mb,
-        plugin_ids=[p["id"] for p in chosen_plugins],
-    )
+    _scripts_and_manifest(server_dir, jar_name, ram_mb, server_type, mc_version, [p["id"] for p in chosen_plugins])
 
     section("Public access (optional)")
     if ask_yes_no("Make this server joinable by others without port forwarding (playit.gg)?", False):
@@ -597,8 +585,4 @@ def run_full_wizard() -> None:
             error(f"Could not set up playit.gg: {exc}")
             warn("Your server still works locally - run start.bat / ./start.sh to launch it.")
 
-    section("Done")
-    ok(f"Server installed at: {server_dir}")
-    info("Run start.bat (Windows) or ./start.sh (Linux/Mac) inside that folder to launch it.")
-    if chosen_has_tab:
-        info("TAB tablist set to your server name - edit plugins/TAB/config.yml to tweak it (then /tab reload).")
+    _done_message(server_dir, chosen_plugins)

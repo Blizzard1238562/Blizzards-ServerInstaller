@@ -33,7 +33,7 @@ except ImportError:
     print("Missing dependency 'PyYAML'. Install it with: pip install pyyaml")
     sys.exit(1)
 
-from blizzards_installer.ui import banner, error, info, warn
+from blizzards_installer.ui import activity, banner, error, info, warn
 from blizzards_installer.update import available_update
 from blizzards_installer.wizard import run_quick_unattended, run_wizard
 
@@ -56,7 +56,8 @@ def main(argv=None) -> None:
 
     banner()
     try:
-        newest = available_update()
+        with activity("Checking for installer updates"):
+            newest = available_update()
     except Exception:
         newest = None
     if newest:
@@ -89,4 +90,4 @@ def main(argv=None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main()

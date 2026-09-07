@@ -66,8 +66,7 @@ def agent_asset() -> tuple[str, str]:
             raise RuntimeError(f"No playit.gg agent for this Windows architecture ({machine}).")
         wanted = [f"playit-windows-{arch}-signed.exe", f"playit-windows-{arch}.exe"]
     elif sys.platform.startswith("linux"):
-        arch = _LINUX_ARCH_ASSETS.get(machine, "amd64")
-        wanted = [f"playit-linux-{arch}"]
+        wanted = [f"playit-linux-{_LINUX_ARCH_ASSETS.get(machine, 'amd64')}"]
     elif sys.platform == "darwin":
         raise RuntimeError(
             "playit.gg publishes macOS agents only from playit.gg/download, "
@@ -77,9 +76,9 @@ def agent_asset() -> tuple[str, str]:
         raise RuntimeError(f"playit.gg does not support this platform ({sys.platform}).")
 
     for want in wanted:
-        for asset in assets:
-            if asset["name"] == want:
-                return asset["name"], asset["browser_download_url"]
+        match = next((a for a in assets if a["name"] == want), None)
+        if match:
+            return match["name"], match["browser_download_url"]
     raise RuntimeError(
         "Could not find a playit.gg agent download for this machine in the latest release."
     )
@@ -91,7 +90,10 @@ def install_agent(server_dir: Path) -> Path:
     dest = server_dir / "playit" / name
     net.download_file(url, dest, "playit.gg agent")
     if os.name != "nt":
-        os.chmod(dest, 0o755)
+        try:
+            os.chmod(dest, 0o755)
+        except Exception:
+            pass
     ok(f"Downloaded the playit.gg agent ({name})")
     return dest
 
@@ -121,9 +123,7 @@ def open_claim_console(agent: Path) -> bool:
 def _agent_name_and_path(server_dir: Path) -> tuple[str, Path]:
     """Find the downloaded agent. Falls back to any file in server_dir/playit."""
     playit_dir = server_dir / "playit"
-    if not playit_dir.exists():
-        raise FileNotFoundError("The playit.gg agent is not downloaded yet.")
-    files = sorted(p for p in playit_dir.iterdir() if p.is_file())
+    files = sorted(p for p in playit_dir.iterdir() if p.is_file()) if playit_dir.exists() else []
     if not files:
         raise FileNotFoundError("The playit.gg agent is not downloaded yet.")
     return files[0].name, files[0]
@@ -153,7 +153,10 @@ def store_secret(server_dir: Path, secret: str) -> Optional[Path]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(secret + "\n", encoding="utf-8")
     if os.name != "nt":
-        os.chmod(path, 0o600)
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
     return path
 
 
@@ -173,23 +176,15 @@ def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     window on first run."""
     agent_name, _agent_path = _agent_name_and_path(server_dir)
     flags = _aikars_flags(ram_mb)
+    agent = server_dir / "playit" / agent_name
     secret = _read_secret(server_dir)
-
-    if secret:
-        start_line_bat = (
-            f'start "Blizzards Server - playit tunnel" "{server_dir / "playit" / agent_name}" '
-            f'--secret "{secret}"\r\n'
-        )
-        start_line_sh = f'("./playit/{agent_name}" --secret "{secret}" &)\n'
-    else:
-        start_line_bat = f'start "Blizzards Server - playit tunnel" "{server_dir / "playit" / agent_name}"\r\n'
-        start_line_sh = f'("./playit/{agent_name}" &)\n'
+    secret_arg = f' --secret "{secret}"' if secret else ""
 
     (server_dir / "start-public.bat").write_text(
         "@echo off\r\n"
         "setlocal\r\n"
-        + start_line_bat
-        + f"java {flags} -jar \"{jar_name}\" --nogui\r\n"
+        f'start "Blizzards Server - playit tunnel" "{agent}"{secret_arg}\r\n'
+        f"java {flags} -jar \"{jar_name}\" --nogui\r\n"
         + "pause\r\n",
         encoding="utf-8",
     )
@@ -198,8 +193,8 @@ def write_public_files(server_dir: Path, jar_name: str, ram_mb: int) -> None:
     sh.write_text(
         "#!/usr/bin/env bash\n"
         "cd \"$(dirname \"$0\")\"\n"
-        + start_line_sh
-        + f'java {flags} -jar "{jar_name}" --nogui\n',
+        f'("./playit/{agent_name}"{secret_arg} &)\n'
+        f'java {flags} -jar "{jar_name}" --nogui\n',
         encoding="utf-8",
     )
     try:
