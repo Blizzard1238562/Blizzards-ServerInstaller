@@ -1638,12 +1638,29 @@ class TestBootstrapConfigsReal(unittest.TestCase):
             self.assertFalse(bootstrap_configs(self.tmpdir, Path("server.jar")))
         self.assertEqual(list(self.tmpdir.iterdir()), [])
 
+    def test_launch_failure_returns_false_with_warning(self):
+        # shutil.which points at something that cannot be executed at all.
+        bogus = Path(tempfile.gettempdir()) / "definitely_not_a_java_binary"
+        bogus.write_bytes(b"")
+        self.addCleanup(bogus.unlink, missing_ok=True)
+        with patch("blizzards_installer.config.shutil.which", return_value=str(bogus)):
+            self.assertFalse(bootstrap_configs(self.tmpdir, Path("server.jar")))
+        self.assertEqual(list(self.tmpdir.iterdir()), [])
+
     def test_timeout_without_configs_returns_false(self):
         with patch("blizzards_installer.config.shutil.which", return_value=_fake_java(writes_configs=False, delay=5)):
             start = time.monotonic()
             ok = bootstrap_configs(self.tmpdir, Path("server.jar"), timeout=2)
         self.assertLess(time.monotonic() - start, 9)  # stops waiting once the java fake exits
         self.assertFalse(ok)
+
+    def test_find_paper_config_paths_legacy_layout(self):
+        from blizzards_installer.config import find_paper_config_paths
+
+        (self.tmpdir / "paper.yml").write_text("_version: 29\n", encoding="utf-8")
+        self.assertEqual(find_paper_config_paths(self.tmpdir), (self.tmpdir / "paper.yml", self.tmpdir / "paper.yml", True))
+        # neither layout present
+        self.assertEqual(find_paper_config_paths(Path(tempfile.mkdtemp())), (None, None, False))
 
     def test_apply_gameplay_config_through_real_bootstrap(self):
         answers = {
