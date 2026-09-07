@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import ExitStack, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -27,6 +28,66 @@ from unittest.mock import MagicMock, patch
 _REAL_SLEEP = time.sleep
 
 from blizzards_installer import net as net_mod
+
+# ------------------------------------------------------------------
+# Shared fakes for the wizard-driver tests: the network, download and
+# Paper-bootstrap boundaries (mirrors .verify/e2e_driver.py).
+
+
+def _FAKE_GET_JSON(url, params=None):
+    if "piston-meta" in url:
+        return {
+            "versions": [
+                {"id": "1.21.4", "type": "release"},
+                {"id": "1.21.3", "type": "release"},
+                {"id": "1.21.4-pre1", "type": "snapshot"},
+            ]
+        }
+    if "mcjars" in url or "fill.papermc" in url:
+        return {"builds": [{"buildNumber": 1, "downloads": {"SERVER": {"url": "https://cdn.example/paper-1.21.4.jar"}}}]}
+    if "api.modrinth.com" in url:
+        slug = url.split("/project/")[1].split("/")[0]
+        return [{
+            "version_type": "release",
+            "date_published": "2024-06-01T00:00:00Z",
+            "files": [{"primary": True, "url": f"https://cdn.example/{slug}.jar", "filename": f"{slug}.jar"}],
+        }]
+    if "api.mojang.com" in url:
+        name = url.rsplit("/", 1)[-1]
+        if name.lower() == "ghost":
+            raise net_mod.HTTPError(url, 204)  # profile not found
+        return {"id": "069a79f4-44e9-4726-a5be-fca90e38aaf5", "name": name}
+    raise AssertionError(f"unexpected URL: {url}")
+
+
+def _FAKE_DOWNLOAD(url, dest, label):
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"fake jar")
+
+
+def _FAKE_BOOTSTRAP(dir_path, jar_path):
+    TestApplyGameplayConfig._write_fixture_configs(dir_path)
+    return True
+
+
+@contextmanager
+def _wizard(answers, extra=(), replace=None):
+    """Run the real wizard with network/download/bootstrap faked and a
+    scripted answer list. extra: (target, side_effect) pairs for further
+    patches; replace: {target: new_value} for outright attribute swaps
+    (e.g. {"sys.stdout": out})."""
+    calls = iter(answers)
+    with ExitStack() as stack:
+        stack.enter_context(patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)))
+        stack.enter_context(patch("blizzards_installer.net.http_get_json", side_effect=_FAKE_GET_JSON))
+        stack.enter_context(patch("blizzards_installer.net.download_file", side_effect=_FAKE_DOWNLOAD))
+        stack.enter_context(patch("blizzards_installer.config.bootstrap_configs", side_effect=_FAKE_BOOTSTRAP))
+        for target, effect in extra:
+            stack.enter_context(patch(target, side_effect=effect))
+        for target, new in (replace or {}).items():
+            stack.enter_context(patch(target, new))
+        yield
+
 
 from blizzards_installer.config import (
     DEFAULT_PROPERTIES,
@@ -751,10 +812,6 @@ class TestApplyGameplayConfig(unittest.TestCase):
         )
 
     def test_successful_bootstrap_patches_configs(self):
-        def fake_bootstrap(server_dir, jar_path):
-            self._write_fixture_configs(server_dir)
-            return True
-
         answers = {
             "tnt_dupe": True,
             "block_break_exploits": False,
@@ -763,7 +820,7 @@ class TestApplyGameplayConfig(unittest.TestCase):
             "anti_xray_mode": 2,
             "allow_end": False,
         }
-        with patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap):
+        with patch("blizzards_installer.config.bootstrap_configs", side_effect=_FAKE_BOOTSTRAP):
             apply_gameplay_config(self.tmpdir, Path("server.jar"), answers)
         global_text = (self.tmpdir / "config" / "paper-global.yml").read_text(encoding="utf-8")
         self.assertIn("allow-piston-duplication: true", global_text)
@@ -1259,41 +1316,11 @@ class TestWizardEndToEnd(unittest.TestCase):
     exercises the Quick and Full question flows, registry loading, downloads,
     TAB config generation, config presets, config patching and start scripts."""
 
-    def _fake_get_json(self, url, params=None):
-        if "piston-meta" in url:
-            return {
-                "versions": [
-                    {"id": "1.21.4", "type": "release"},
-                    {"id": "1.21.3", "type": "release"},
-                    {"id": "1.21.4-pre1", "type": "snapshot"},
-                ]
-            }
-        if "mcjars" in url or "fill.papermc" in url:
-            return {"builds": [{"buildNumber": 1, "downloads": {"SERVER": {"url": "https://cdn.example/paper-1.21.4.jar"}}}]}
-        if "api.modrinth.com" in url:
-            slug = url.split("/project/")[1].split("/")[0]
-            return [{
-                "version_type": "release",
-                "date_published": "2024-06-01T00:00:00Z",
-                "files": [{"primary": True, "url": f"https://cdn.example/{slug}.jar", "filename": f"{slug}.jar"}],
-            }]
-        if "api.mojang.com" in url:
-            name = url.rsplit("/", 1)[-1]
-            if name.lower() == "ghost":
-                raise net_mod.HTTPError(url, 204)  # profile not found
-            return {"id": "069a79f4-44e9-4726-a5be-fca90e38aaf5", "name": name}
-        raise AssertionError(f"unexpected URL: {url}")
-
-    @staticmethod
-    def _fake_download(url, dest, label):
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"fake jar")
-
     def test_unattended_quick_install_never_prompts(self):
         server_dir = Path(tempfile.mkdtemp()) / "auto"
         with patch("blizzards_installer.ui.input", side_effect=AssertionError("unattended mode must not ask")), \
-                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
-                patch("blizzards_installer.net.download_file", side_effect=self._fake_download):
+                patch("blizzards_installer.net.http_get_json", side_effect=_FAKE_GET_JSON), \
+                patch("blizzards_installer.net.download_file", side_effect=_FAKE_DOWNLOAD):
             run_quick_unattended(server_name="Auto Server", server_dir=server_dir, ram_mb=2048)
 
         props = (server_dir / "server.properties").read_text(encoding="utf-8")
@@ -1337,10 +1364,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         server_dir, tab_cfg = self._make_existing_server()
         # Update mode is the third menu entry: mode, server folder, confirm.
         answers = ["3\n", str(server_dir) + "\n", "y\n"]
-        calls = iter(answers)
-        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
-                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
-                patch("blizzards_installer.net.download_file", side_effect=self._fake_download):
+        with _wizard(answers):
             run_wizard()
 
         # Server jar + plugin jars were refreshed.
@@ -1364,8 +1388,8 @@ class TestWizardEndToEnd(unittest.TestCase):
     def test_unattended_quick_updates_existing_install(self):
         server_dir, tab_cfg = self._make_existing_server()
         with patch("blizzards_installer.ui.input", side_effect=AssertionError("must not ask")), \
-                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
-                patch("blizzards_installer.net.download_file", side_effect=self._fake_download):
+                patch("blizzards_installer.net.http_get_json", side_effect=_FAKE_GET_JSON), \
+                patch("blizzards_installer.net.download_file", side_effect=_FAKE_DOWNLOAD):
             run_quick_unattended(server_dir=server_dir)  # refreshes instead of raising
         self.assertEqual((server_dir / "paper-1.21.4.jar").read_bytes(), b"fake jar")
         self.assertEqual(tab_cfg.read_text(encoding="utf-8"), "user tweaks\n")
@@ -1383,8 +1407,8 @@ class TestWizardEndToEnd(unittest.TestCase):
 
         calls = iter(answers)
         with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
-                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
-                patch("blizzards_installer.net.download_file", side_effect=self._fake_download), \
+                patch("blizzards_installer.net.http_get_json", side_effect=_FAKE_GET_JSON), \
+                patch("blizzards_installer.net.download_file", side_effect=_FAKE_DOWNLOAD), \
                 patch("blizzards_installer.config.bootstrap_configs") as mock_bootstrap:
             run_wizard()
         mock_bootstrap.assert_not_called()  # Quick mode skips the config bootstrap
@@ -1433,15 +1457,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         answers[29] = "y\n"  # install TAB (2nd plugin prompt)
         answers[42] = "2048\n"  # RAM for the start scripts
 
-        def fake_bootstrap(dir_path, jar_path):
-            TestApplyGameplayConfig._write_fixture_configs(dir_path)
-            return True
-
-        calls = iter(answers)
-        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
-                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
-                patch("blizzards_installer.net.download_file", side_effect=self._fake_download), \
-                patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap):
+        with _wizard(answers):
             run_wizard()
 
         # 2 GB RAM reached the start scripts.
@@ -1490,15 +1506,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         server_dir = Path(tempfile.mkdtemp()) / "server"
         answers[3] = str(server_dir) + "\n"  # install directory (prompt 3)
 
-        def fake_bootstrap(dir_path, jar_path):
-            TestApplyGameplayConfig._write_fixture_configs(dir_path)
-            return True
-
-        calls = iter(answers)
-        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
-                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
-                patch("blizzards_installer.net.download_file", side_effect=self._fake_download), \
-                patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap):
+        with _wizard(answers):
             run_wizard()
         return server_dir
 
@@ -1595,16 +1603,7 @@ class TestWizardEndToEnd(unittest.TestCase):
         answers[25] = "y\n"  # TNT duplication -> yes
         answers[46] = "y\n"  # show config preview
 
-        def fake_bootstrap(dir_path, jar_path):
-            TestApplyGameplayConfig._write_fixture_configs(dir_path)
-            return True
-
-        calls = iter(answers)
-        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
-                patch("blizzards_installer.net.http_get_json", side_effect=self._fake_get_json), \
-                patch("blizzards_installer.net.download_file", side_effect=self._fake_download), \
-                patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap), \
-                patch("sys.stdout", out):
+        with _wizard(answers, replace={"sys.stdout": out}):
             run_wizard()
         text = out.getvalue()
         self.assertIn("Config that will be written", text)
@@ -2093,21 +2092,6 @@ class TestWizardPlayitOptIn(unittest.TestCase):
         answers[47] = "y\n"  # link with an agent secret
         answers[48] = "secret_abc-123\n"
 
-        def fake_get_json(url, params=None):
-            if "piston-meta" in url:
-                return {"versions": [{"id": "1.21.4", "type": "release"}]}
-            if "mcjars" in url or "fill.papermc" in url:
-                return {"builds": [{"buildNumber": 1, "downloads": {"SERVER": {"url": "https://cdn.example/paper-1.21.4.jar"}}}]}
-            if "api.modrinth.com" in url:
-                slug = url.split("/project/")[1].split("/")[0]
-                return [{"version_type": "release", "date_published": "2024-06-01T00:00:00Z",
-                         "files": [{"primary": True, "url": f"https://cdn.example/{slug}.jar", "filename": f"{slug}.jar"}]}]
-            raise AssertionError(f"unexpected URL: {url}")
-
-        def fake_download(url, dest, label):
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(b"fake jar")
-
         def fake_install_agent(sdir):
             playit = sdir / "playit"
             playit.mkdir()
@@ -2115,16 +2099,7 @@ class TestWizardPlayitOptIn(unittest.TestCase):
             agent.write_bytes(b"agent")
             return agent
 
-        def fake_bootstrap(dir_path, jar_path):
-            TestApplyGameplayConfig._write_fixture_configs(dir_path)
-            return True
-
-        calls = iter(answers)
-        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
-                patch("blizzards_installer.net.http_get_json", side_effect=fake_get_json), \
-                patch("blizzards_installer.net.download_file", side_effect=fake_download), \
-                patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap), \
-                patch("blizzards_installer.wizard.install_agent", side_effect=fake_install_agent):
+        with _wizard(answers, extra=[("blizzards_installer.wizard.install_agent", fake_install_agent)]):
             run_wizard()
 
         self.assertEqual((server_dir / "playit" / "secret.key").read_text(encoding="utf-8"), "secret_abc-123\n")
@@ -2213,30 +2188,7 @@ class TestServerIcon(unittest.TestCase):
         answers[43] = "y\n"  # use a custom server icon
         answers[44] = str(src) + "\n"
 
-        def fake_get_json(url, params=None):
-            if "piston-meta" in url:
-                return {"versions": [{"id": "1.21.4", "type": "release"}]}
-            if "mcjars" in url or "fill.papermc" in url:
-                return {"builds": [{"buildNumber": 1, "downloads": {"SERVER": {"url": "https://cdn.example/paper-1.21.4.jar"}}}]}
-            if "api.modrinth.com" in url:
-                slug = url.split("/project/")[1].split("/")[0]
-                return [{"version_type": "release", "date_published": "2024-06-01T00:00:00Z",
-                         "files": [{"primary": True, "url": f"https://cdn.example/{slug}.jar", "filename": f"{slug}.jar"}]}]
-            raise AssertionError(f"unexpected URL: {url}")
-
-        def fake_download(url, dest, label):
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(b"fake jar")
-
-        def fake_bootstrap(dir_path, jar_path):
-            TestApplyGameplayConfig._write_fixture_configs(dir_path)
-            return True
-
-        calls = iter(answers)
-        with patch("blizzards_installer.ui.input", side_effect=lambda *a: next(calls)), \
-                patch("blizzards_installer.net.http_get_json", side_effect=fake_get_json), \
-                patch("blizzards_installer.net.download_file", side_effect=fake_download), \
-                patch("blizzards_installer.config.bootstrap_configs", side_effect=fake_bootstrap):
+        with _wizard(answers):
             run_wizard()
         self.assertEqual((server_dir / "server-icon.png").read_bytes(), src.read_bytes())
 
